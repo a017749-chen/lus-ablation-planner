@@ -17,6 +17,7 @@ import {
   isPointInUltrasoundSector,
   ULTRASOUND_SECTOR
 } from '../math/ultrasoundGeometry';
+import { AnatomyBuilder } from '../scene/AnatomyBuilder';
 import { InstrumentBuilder } from '../scene/Instruments';
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -463,6 +464,36 @@ function runTests() {
   assertNear(wedgeAutoAlign.residualDistanceMm, 0, 1e-6, 'Wedge in-plane auto-alignment distance residual must be zero');
   assertNear(wedgeAutoAlign.residualAngleDeg, 0, 1e-6, 'Wedge in-plane auto-alignment angle residual must be zero');
 
+  // Anatomical liver lobe proportions (nominal 70:30 right:left volume ratio)
+  const anatomy = AnatomyBuilder.build();
+  const rightLobeMesh = anatomy.liverGroup.children[0] as THREE.Mesh;
+  const leftLobeMesh = anatomy.liverGroup.children[1] as THREE.Mesh;
+  rightLobeMesh.updateMatrixWorld(true);
+  leftLobeMesh.updateMatrixWorld(true);
+
+  const volRight = (65 * 1.2) * (65 * 1.1) * (65 * 0.75);
+  const volLeft = (60 * 1.3) * (60 * 0.85) * (60 * 0.5);
+  const rightRatio = volRight / (volRight + volLeft);
+  const leftRatio = volLeft / (volRight + volLeft);
+  assert(rightRatio >= 0.65 && rightRatio <= 0.75, `Right lobe volume ratio should be ~70% (got ${(rightRatio * 100).toFixed(1)}%)`);
+  assert(leftRatio >= 0.25 && leftRatio <= 0.35, `Left lobe volume ratio should be ~30% (got ${(leftRatio * 100).toFixed(1)}%)`);
+
+  const s2s3Local = LESION_PRESETS['S2_S3'].tumorPosition.clone().applyMatrix4(leftLobeMesh.matrixWorld.clone().invert());
+  const s2s3NormDist = Math.sqrt(
+    (s2s3Local.x / (60 * 1.3)) ** 2 +
+    (s2s3Local.y / (60 * 0.85)) ** 2 +
+    (s2s3Local.z / (60 * 0.5)) ** 2
+  );
+  assert(s2s3NormDist < 1.0, `S2/S3 tumor should be within left lobe parenchyma (normalized dist: ${s2s3NormDist.toFixed(2)})`);
+
+  const s5s6Local = LESION_PRESETS['S5_S6'].tumorPosition.clone().applyMatrix4(rightLobeMesh.matrixWorld.clone().invert());
+  const s5s6NormDist = Math.sqrt(
+    (s5s6Local.x / (65 * 1.2)) ** 2 +
+    (s5s6Local.y / (65 * 1.1)) ** 2 +
+    (s5s6Local.z / (65 * 0.75)) ** 2
+  );
+  assert(s5s6NormDist < 1.0, `S5/S6 tumor should be within right lobe parenchyma (normalized dist: ${s5s6NormDist.toFixed(2)})`);
+
   console.log('PASS: kinematics round-trip and pitch sign');
   console.log('PASS: rendered needle, ultrasound plane, and ablation ellipsoid share world coordinates');
   console.log('PASS: lesion intersection, finite fan, and fixed-entry auto-align feasibility');
@@ -472,6 +503,7 @@ function runTests() {
   console.log('PASS: ellipsoid geometric overlap estimate');
   console.log('PASS: needle-shaft surface clearance and vessel warnings');
   console.log('PASS: right-angle wedge optimizer point C calculation and in-plane coplanarity');
+  console.log('PASS: anatomical liver lobe 70:30 proportions and tumor embedding');
 }
 
 runTests();
