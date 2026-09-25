@@ -32,8 +32,8 @@ export class CollisionDetector {
       {
         name: 'IVC (下腔靜脈主幹)',
         type: 'ivc',
-        start: new THREE.Vector3(12, -70, -35),
-        end: new THREE.Vector3(10, 85, -28),
+        start: new THREE.Vector3(-12, -70, -35),
+        end: new THREE.Vector3(-10, 85, -28),
         radius: 9.0, // 18mm diameter
         color: 0x1e88e5
       },
@@ -41,8 +41,8 @@ export class CollisionDetector {
       {
         name: 'Hepatic Vein (肝靜脈匯合部)',
         type: 'ivc',
-        start: new THREE.Vector3(10, 75, -28),
-        end: new THREE.Vector3(-15, 60, -10),
+        start: new THREE.Vector3(-10, 75, -28),
+        end: new THREE.Vector3(15, 60, -10),
         radius: 5.5,
         color: 0x2196f3
       },
@@ -50,8 +50,8 @@ export class CollisionDetector {
       {
         name: 'Portal Vein Main (門靜脈主幹)',
         type: 'portal_vein',
-        start: new THREE.Vector3(5, -60, -10),
-        end: new THREE.Vector3(10, -10, -5),
+        start: new THREE.Vector3(-5, -60, -10),
+        end: new THREE.Vector3(-10, -10, -5),
         radius: 6.5, // 13mm diameter
         color: 0x8e24aa
       },
@@ -59,8 +59,8 @@ export class CollisionDetector {
       {
         name: 'Right Portal Vein (門靜脈右前/右後支)',
         type: 'portal_vein',
-        start: new THREE.Vector3(10, -10, -5),
-        end: new THREE.Vector3(38, 5, -12),
+        start: new THREE.Vector3(-10, -10, -5),
+        end: new THREE.Vector3(-38, 5, -12),
         radius: 4.8,
         color: 0xab47bc
       },
@@ -68,8 +68,8 @@ export class CollisionDetector {
       {
         name: 'Left Portal Vein (門靜脈左支)',
         type: 'portal_vein',
-        start: new THREE.Vector3(10, -10, -5),
-        end: new THREE.Vector3(-25, 5, 5),
+        start: new THREE.Vector3(-10, -10, -5),
+        end: new THREE.Vector3(25, 5, 5),
         radius: 4.5,
         color: 0xba68c8
       }

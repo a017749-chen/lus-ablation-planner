@@ -30,7 +30,7 @@ class SurgicalPlannerApp {
   // Active surgical state
   private activePreset: LesionPreset = LESION_PRESETS['S5_S6'];
   private portSelection: PortSelectionState = getSuggestedPortSelection(LESION_PRESETS['S5_S6']);
-  private percutaneousPivot: THREE.Vector3 = new THREE.Vector3(65, 0, 70);
+  private percutaneousPivot: THREE.Vector3 = new THREE.Vector3(-65, 0, 70);
   private percutaneousNormal: THREE.Vector3 = new THREE.Vector3(0, 0, -1);
   private isWedgeGuideVisible: boolean = true;
 
@@ -170,7 +170,7 @@ class SurgicalPlannerApp {
     if (preset.needleInitialConfig.percutaneousEntry) {
       this.percutaneousPivot.copy(preset.needleInitialConfig.percutaneousEntry);
     } else {
-      this.percutaneousPivot.set(65, 0, 70);
+      this.percutaneousPivot.set(-65, 0, 70);
     }
     this.percutaneousNormal.set(0, 0, -1);
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TROCAR_PRESETS } from '../config/presets';
+import { ANTERIOR_VIEW } from '../math/patientCoordinates';
 
 export interface ViewportManager {
   mainCamera: THREE.PerspectiveCamera;
@@ -63,11 +64,12 @@ export class MultiViewport {
 
       switch (preset) {
         case 'ap': // Anteroposterior (Frontal view)
-          mainCamera.position.set(10, 10, 320);
-          mainCamera.up.set(0, 1, 0);
+          mainCamera.position.set(...ANTERIOR_VIEW.position);
+          mainCamera.up.set(...ANTERIOR_VIEW.up);
+          orbitControls.target.set(...ANTERIOR_VIEW.target);
           break;
         case 'lateral': // Right Lateral (Sagittal view)
-          mainCamera.position.set(340, 10, 10);
+          mainCamera.position.set(-340, 10, 10);
           mainCamera.up.set(0, 1, 0);
           break;
         case 'superior': // Superior Axial (Top-down view)
@@ -75,7 +77,7 @@ export class MultiViewport {
           mainCamera.up.set(0, 0, -1);
           break;
         case 'surgeon': // Surgeon Standing at Patient's Right-Inferior
-          mainCamera.position.set(90, -190, 210);
+          mainCamera.position.set(-90, -190, 210);
           mainCamera.up.set(0, 1, 0);
           break;
         case 'reset':
@@ -105,11 +107,18 @@ export class MultiViewport {
 
     const render = (scene: THREE.Scene) => {
       orbitControls.update();
+      const facePatientSideLabels = (camera: THREE.Camera) => {
+        scene.traverse((object) => {
+          if (object.userData.isPatientSideBillboard) object.quaternion.copy(camera.quaternion);
+        });
+      };
+      facePatientSideLabels(mainCamera);
       mainRenderer.render(scene, mainCamera);
 
       // Keep laparoscope camera aiming at liver field from umbilical port
       lapCamera.position.copy(umbilical.pivotPosition).add(new THREE.Vector3(0, 8, -8));
       lapCamera.lookAt(new THREE.Vector3(15, 20, 0));
+      facePatientSideLabels(lapCamera);
       lapRenderer.render(scene, lapCamera);
     };
 

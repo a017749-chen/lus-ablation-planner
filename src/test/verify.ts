@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   LESION_PRESETS,
+  TROCAR_PRESETS,
   isProbePort,
   PROBE_PORT_IDS,
   getSuggestedPortSelection,
@@ -11,6 +12,11 @@ import { AlignmentEngine } from '../math/alignmentEngine';
 import { CollisionDetector } from '../math/collision';
 import { estimateEllipsoidTargetOverlap } from '../math/coverage';
 import { FulcrumKinematics } from '../math/kinematics';
+import {
+  ANTERIOR_VIEW,
+  dicomLpsToScene,
+  sceneToDicomLps
+} from '../math/patientCoordinates';
 import { WedgeOptimizer } from '../math/wedgeOptimizer';
 import {
   getSphereSlabIntersection,
@@ -37,8 +43,87 @@ function assertVectorNear(
   assert(actual.distanceTo(expected) <= tolerance, `${message}: error ${actual.distanceTo(expected)} mm`);
 }
 
+function getClosedMeshVolume(mesh: THREE.Mesh): number {
+  const geometry = mesh.geometry;
+  const position = geometry.getAttribute('position');
+  const index = geometry.index;
+  const vertexCount = index?.count ?? position.count;
+  mesh.updateMatrixWorld(true);
+
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const cross = new THREE.Vector3();
+  let signedVolume = 0;
+
+  for (let i = 0; i < vertexCount; i += 3) {
+    const indexA = index ? index.getX(i) : i;
+    const indexB = index ? index.getX(i + 1) : i + 1;
+    const indexC = index ? index.getX(i + 2) : i + 2;
+    a.fromBufferAttribute(position, indexA).applyMatrix4(mesh.matrixWorld);
+    b.fromBufferAttribute(position, indexB).applyMatrix4(mesh.matrixWorld);
+    c.fromBufferAttribute(position, indexC).applyMatrix4(mesh.matrixWorld);
+    signedVolume += a.dot(cross.crossVectors(b, c)) / 6;
+  }
+
+  return Math.abs(signedVolume);
+}
+
+function containsSphereWithinEllipsoid(mesh: THREE.Mesh, center: THREE.Vector3, radius: number): boolean {
+  mesh.geometry.computeBoundingBox();
+  const bounds = mesh.geometry.boundingBox;
+  if (!bounds) return false;
+
+  const radii = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  if (Math.min(radii.x, radii.y, radii.z) <= 0) return false;
+
+  mesh.updateMatrixWorld(true);
+  const localCenter = center.clone().applyMatrix4(mesh.matrixWorld.clone().invert());
+  const localScales = new THREE.Vector3();
+  mesh.getWorldScale(localScales);
+  const localRadius = radius / Math.min(
+    Math.abs(localScales.x),
+    Math.abs(localScales.y),
+    Math.abs(localScales.z)
+  );
+  const normalizedCenterDistance = Math.sqrt(
+    (localCenter.x / radii.x) ** 2 +
+    (localCenter.y / radii.y) ** 2 +
+    (localCenter.z / radii.z) ** 2
+  );
+
+  // Conservative bound: a sphere is contained if its center plus its largest normalized radius fits.
+  return normalizedCenterDistance + localRadius / Math.min(radii.x, radii.y, radii.z) < 1;
+}
+
 function runTests() {
   console.log('=== LUS-Ablation geometry verification ===');
+
+  const dicomLpsPoint = new THREE.Vector3(-40, 25, 120);
+  const scenePoint = dicomLpsToScene(dicomLpsPoint);
+  assertVectorNear(scenePoint, new THREE.Vector3(-40, 120, -25), 1e-8, 'DICOM LPS to planner scene frame');
+  assert(scenePoint.x < 0, 'DICOM patient-right points must map to negative scene X.');
+  assert(scenePoint.y > 0, 'DICOM headward points must map to positive scene Y.');
+  assert(scenePoint.z < 0, 'DICOM posterior points must map to negative scene Z.');
+  assertVectorNear(sceneToDicomLps(scenePoint), dicomLpsPoint, 1e-8, 'Planner scene / DICOM LPS round-trip');
+
+  const anteriorCamera = new THREE.PerspectiveCamera(45, 1, 1, 1500);
+  anteriorCamera.position.set(...ANTERIOR_VIEW.position);
+  anteriorCamera.up.set(...ANTERIOR_VIEW.up);
+  anteriorCamera.lookAt(new THREE.Vector3(...ANTERIOR_VIEW.target));
+  anteriorCamera.updateMatrixWorld(true);
+  const rightSideScreenX = new THREE.Vector3(-20, 10, 10).project(anteriorCamera).x;
+  const leftSideScreenX = new THREE.Vector3(40, 10, 10).project(anteriorCamera).x;
+  assert(rightSideScreenX < 0, 'Patient-right must appear on the left of the anterior view.');
+  assert(leftSideScreenX > 0, 'Patient-left must appear on the right of the anterior view.');
+
+  const vessels = CollisionDetector.getVascularTree();
+  const rightPortalBranch = vessels.find((vessel) => vessel.name.startsWith('Right Portal'));
+  const leftPortalBranch = vessels.find((vessel) => vessel.name.startsWith('Left Portal'));
+  assert(rightPortalBranch !== undefined && rightPortalBranch.end.x < 0, 'Right portal branch must lie on patient-right (negative scene X).');
+  assert(leftPortalBranch !== undefined && leftPortalBranch.end.x > 0, 'Left portal branch must lie on patient-left (positive scene X).');
+  assert(TROCAR_PRESETS.subcostal.pivotPosition.x < 0, 'Right subcostal port must lie on patient-right.');
+  assert(TROCAR_PRESETS.itt.pivotPosition.x < 0, 'Right-sided ITT port must lie on patient-right.');
 
   // Inverse/forward kinematics must round-trip for tilted, vertical, and reversed bases.
   const roundTrips = [
@@ -426,8 +511,8 @@ function runTests() {
 
   // Preserve collision checks against the built-in vascular tree.
   const vesselCollision = CollisionDetector.checkCollision(
-    new THREE.Vector3(12, -70, -35),
-    new THREE.Vector3(10, 85, -28)
+    new THREE.Vector3(-12, -70, -35),
+    new THREE.Vector3(-10, 85, -28)
   );
   assert(vesselCollision.hasCollision, 'Needle through the IVC should trigger collision.');
   const safePath = CollisionDetector.checkCollision(
@@ -464,35 +549,45 @@ function runTests() {
   assertNear(wedgeAutoAlign.residualDistanceMm, 0, 1e-6, 'Wedge in-plane auto-alignment distance residual must be zero');
   assertNear(wedgeAutoAlign.residualAngleDeg, 0, 1e-6, 'Wedge in-plane auto-alignment angle residual must be zero');
 
-  // Anatomical liver lobe proportions (nominal 70:30 right:left volume ratio)
+  // Compare rendered ellipsoid meshes, not hard-coded radii. Their 70:30 standalone
+  // mesh-volume ratio is a shape cue only because the translucent lobes overlap.
   const anatomy = AnatomyBuilder.build();
-  const rightLobeMesh = anatomy.liverGroup.children[0] as THREE.Mesh;
-  const leftLobeMesh = anatomy.liverGroup.children[1] as THREE.Mesh;
-  rightLobeMesh.updateMatrixWorld(true);
-  leftLobeMesh.updateMatrixWorld(true);
+  const rightLobeMesh = anatomy.liverGroup.getObjectByName('IllustrativeRightLobe');
+  const leftLobeMesh = anatomy.liverGroup.getObjectByName('IllustrativeLeftLobe');
+  const rightSideLabel = anatomy.landmarks.getObjectByName('PatientRightLabel');
+  const leftSideLabel = anatomy.landmarks.getObjectByName('PatientLeftLabel');
+  assert(rightLobeMesh instanceof THREE.Mesh, 'Illustrative right lobe mesh must exist.');
+  assert(leftLobeMesh instanceof THREE.Mesh, 'Illustrative left lobe mesh must exist.');
+  assert(rightSideLabel instanceof THREE.Group, 'Patient-right marker must exist.');
+  assert(leftSideLabel instanceof THREE.Group, 'Patient-left marker must exist.');
+  anatomy.group.updateMatrixWorld(true);
 
-  const volRight = (65 * 1.2) * (65 * 1.1) * (65 * 0.75);
-  const volLeft = (60 * 1.3) * (60 * 0.85) * (60 * 0.5);
-  const rightRatio = volRight / (volRight + volLeft);
-  const leftRatio = volLeft / (volRight + volLeft);
-  assert(rightRatio >= 0.65 && rightRatio <= 0.75, `Right lobe volume ratio should be ~70% (got ${(rightRatio * 100).toFixed(1)}%)`);
-  assert(leftRatio >= 0.25 && leftRatio <= 0.35, `Left lobe volume ratio should be ~30% (got ${(leftRatio * 100).toFixed(1)}%)`);
+  assert(rightLobeMesh.position.x < 0, 'Illustrative right lobe must be on negative scene X.');
+  assert(leftLobeMesh.position.x > 0, 'Illustrative left lobe must be on positive scene X.');
+  assert(rightSideLabel.position.x < 0, 'R marker must be on the patient-right side.');
+  assert(leftSideLabel.position.x > 0, 'L marker must be on the patient-left side.');
 
-  const s2s3Local = LESION_PRESETS['S2_S3'].tumorPosition.clone().applyMatrix4(leftLobeMesh.matrixWorld.clone().invert());
-  const s2s3NormDist = Math.sqrt(
-    (s2s3Local.x / (60 * 1.3)) ** 2 +
-    (s2s3Local.y / (60 * 0.85)) ** 2 +
-    (s2s3Local.z / (60 * 0.5)) ** 2
-  );
-  assert(s2s3NormDist < 1.0, `S2/S3 tumor should be within left lobe parenchyma (normalized dist: ${s2s3NormDist.toFixed(2)})`);
+  const volRightMesh = getClosedMeshVolume(rightLobeMesh);
+  const volLeftMesh = getClosedMeshVolume(leftLobeMesh);
+  const rightMeshRatio = volRightMesh / (volRightMesh + volLeftMesh);
+  const leftMeshRatio = volLeftMesh / (volRightMesh + volLeftMesh);
+  assert(rightMeshRatio >= 0.65 && rightMeshRatio <= 0.75, `Standalone right-lobe mesh volume should be ~70% of the two ellipsoid volumes (got ${(rightMeshRatio * 100).toFixed(1)}%)`);
+  assert(leftMeshRatio >= 0.25 && leftMeshRatio <= 0.35, `Standalone left-lobe mesh volume should be ~30% of the two ellipsoid volumes (got ${(leftMeshRatio * 100).toFixed(1)}%)`);
 
-  const s5s6Local = LESION_PRESETS['S5_S6'].tumorPosition.clone().applyMatrix4(rightLobeMesh.matrixWorld.clone().invert());
-  const s5s6NormDist = Math.sqrt(
-    (s5s6Local.x / (65 * 1.2)) ** 2 +
-    (s5s6Local.y / (65 * 1.1)) ** 2 +
-    (s5s6Local.z / (65 * 0.75)) ** 2
-  );
-  assert(s5s6NormDist < 1.0, `S5/S6 tumor should be within right lobe parenchyma (normalized dist: ${s5s6NormDist.toFixed(2)})`);
+  const lobeForPreset: Record<string, THREE.Mesh> = {
+    S2_S3: leftLobeMesh,
+    S5_S6: rightLobeMesh,
+    S7_S8: rightLobeMesh
+  };
+  assert(Object.keys(lobeForPreset).length === Object.keys(LESION_PRESETS).length, 'Every lesion preset must have an explicit illustrative lobe mapping.');
+  for (const [presetId, preset] of Object.entries(LESION_PRESETS)) {
+    const lobe = lobeForPreset[presetId];
+    assert(lobe instanceof THREE.Mesh, `${presetId} must map to an illustrative lobe mesh.`);
+    assert(
+      containsSphereWithinEllipsoid(lobe, preset.tumorPosition, preset.tumorDiameter * 0.5),
+      `${presetId} full tumor sphere must fit within its illustrative lobe.`
+    );
+  }
 
   console.log('PASS: kinematics round-trip and pitch sign');
   console.log('PASS: rendered needle, ultrasound plane, and ablation ellipsoid share world coordinates');
@@ -503,7 +598,8 @@ function runTests() {
   console.log('PASS: ellipsoid geometric overlap estimate');
   console.log('PASS: needle-shaft surface clearance and vessel warnings');
   console.log('PASS: right-angle wedge optimizer point C calculation and in-plane coplanarity');
-  console.log('PASS: anatomical liver lobe 70:30 proportions and tumor embedding');
+  console.log('PASS: DICOM LPS conversion and patient right/left scene orientation');
+  console.log('PASS: illustrative lobe mesh proportions and complete tumor containment for every preset');
 }
 
 runTests();
