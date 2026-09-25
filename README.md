@@ -27,7 +27,7 @@
   - 深入深度 (Insertion Depth, $d$)
   - 軸向自轉 (Roll, $\psi$)
 - 支援 4 大標準套管通道佈局：
-  1. **臍孔套管 (Umbilical Port, 10mm)**：光學腹腔鏡通道。
+  1. **臍孔套管 (Umbilical Port, 10mm)**：光學腹腔鏡通道；以獨立「臍孔腹腔鏡鏡頭視角」控制相機，不列為 LUS 探頭入口，也不會移動探頭。
   2. **劍突下套管 (Subxiphoid Port, 5mm)**：輔助操作與拉鉤通道。
   3. **右肋下套管 (Right Subcostal Port, 12mm)**：LUS 探頭主操作通道。
   4. **肋間經胸套管 (Intercostal Transthoracic Trocar, ITT, 10mm)**：專門克服 S7/S8 橫膈頂部盲區之肋間直達路徑。

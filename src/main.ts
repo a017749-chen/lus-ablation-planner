@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import './style.css';
 import {
   getSuggestedPortSelection,
+  isProbePort,
   LESION_PRESETS,
   LesionPreset,
   PortSelectionState,
@@ -514,6 +515,7 @@ class SurgicalPlannerApp {
     document.getElementById('btn-cam-lateral')?.addEventListener('click', () => this.viewports.setCameraPreset('lateral'));
     document.getElementById('btn-cam-superior')?.addEventListener('click', () => this.viewports.setCameraPreset('superior'));
     document.getElementById('btn-cam-surgeon')?.addEventListener('click', () => this.viewports.setCameraPreset('surgeon'));
+    document.getElementById('btn-camera-umbilical')?.addEventListener('click', () => this.viewports.setCameraPreset('surgeon'));
     document.getElementById('btn-cam-reset')?.addEventListener('click', () => this.viewports.setCameraPreset('reset'));
 
     // Layer toggles
@@ -550,7 +552,8 @@ class SurgicalPlannerApp {
 
     const probePortSelect = document.getElementById('probe-port-select') as HTMLSelectElement | null;
     probePortSelect?.addEventListener('change', (event) => {
-      const port = (event.target as HTMLSelectElement).value as PortSelectionState['probePort'];
+      const port = (event.target as HTMLSelectElement).value;
+      if (!isProbePort(port)) return;
       this.portSelection = selectProbePort(this.portSelection, port);
       this.syncTrocarSelectionUI();
       this.updateKinematicsAndMath();

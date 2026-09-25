@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import {
   LESION_PRESETS,
+  isProbePort,
+  PROBE_PORT_IDS,
   getSuggestedPortSelection,
   selectNeedleEntry,
   selectProbePort
@@ -343,6 +345,9 @@ function runTests() {
   assertNear(outOfSlice.crossSectionRadiusMm, 0, 1e-8, 'Invisible slice has no displayed radius');
 
   // Preset port recommendations are independent: S7/S8 uses subcostal probe and ITT needle.
+  assert(!isProbePort('umbilical'), 'Umbilical camera port must not be selectable as a LUS probe port.');
+  assert(PROBE_PORT_IDS.every(isProbePort), 'Every listed probe port must pass probe-port validation.');
+
   const s7Ports = getSuggestedPortSelection(LESION_PRESETS.S7_S8);
   assert(s7Ports.probePort === 'subcostal', 'S7/S8 preset should select subcostal probe port.');
   assert(s7Ports.needlePort === 'itt' && s7Ports.needleMode === 'trocar', 'S7/S8 preset should select ITT needle port.');

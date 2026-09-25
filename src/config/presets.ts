@@ -1,5 +1,12 @@
 import * as THREE from 'three';
 
+export const PROBE_PORT_IDS = ['subcostal', 'subxiphoid', 'itt'] as const;
+export type ProbePortId = (typeof PROBE_PORT_IDS)[number];
+
+export function isProbePort(value: string): value is ProbePortId {
+  return (PROBE_PORT_IDS as readonly string[]).includes(value);
+}
+
 export interface LesionPreset {
   id: string;
   name: string;
@@ -8,7 +15,7 @@ export interface LesionPreset {
   tumorPosition: THREE.Vector3;
   tumorDiameter: number; // mm
   safetyMargin: number; // mm
-  suggestedProbePort: 'subcostal' | 'subxiphoid' | 'umbilical' | 'itt';
+  suggestedProbePort: ProbePortId;
   suggestedNeedlePort: 'subcostal' | 'subxiphoid' | 'itt' | 'percutaneous';
   requiresITT: boolean;
   probeInitialConfig: {
@@ -158,7 +165,7 @@ export const LESION_PRESETS: Record<string, LesionPreset> = {
 
 /** Resolve the separate probe and needle ports selected by a lesion preset. */
 export interface PortSelectionState {
-  probePort: LesionPreset['suggestedProbePort'];
+  probePort: ProbePortId;
   needlePort: LesionPreset['suggestedNeedlePort'];
   needleMode: 'trocar' | 'percutaneous';
 }
@@ -174,7 +181,7 @@ export function getSuggestedPortSelection(preset: LesionPreset): PortSelectionSt
 /** Change the probe port while preserving the independently selected needle entry. */
 export function selectProbePort(
   selection: PortSelectionState,
-  probePort: PortSelectionState['probePort']
+  probePort: ProbePortId
 ): PortSelectionState {
   return { ...selection, probePort };
 }

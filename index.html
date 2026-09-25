@@ -103,7 +103,7 @@
         <button id="btn-cam-ap" class="px-2 py-1 text-[11px] font-mono rounded bg-slate-800 hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-300 text-left transition-colors" title="前後位 Anteroposterior">AP 正視角</button>
         <button id="btn-cam-lateral" class="px-2 py-1 text-[11px] font-mono rounded hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-400 text-left transition-colors" title="右側位 Right Lateral">RL 側視角</button>
         <button id="btn-cam-superior" class="px-2 py-1 text-[11px] font-mono rounded hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-400 text-left transition-colors" title="頭頂軸位 Superior Axial">AX 軸頂角</button>
-        <button id="btn-cam-surgeon" class="px-2 py-1 text-[11px] font-mono rounded hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-400 text-left transition-colors" title="主刀醫師站位視角">Surgeon 主刀</button>
+        <button id="btn-cam-surgeon" class="px-2 py-1 text-[11px] font-mono rounded hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-400 text-left transition-colors" title="臍孔腹腔鏡鏡頭的主刀觀察視角">Surgeon／臍孔鏡頭</button>
         <button id="btn-cam-reset" class="px-2 py-1 text-[10px] font-mono rounded border border-slate-700/60 hover:bg-slate-700 text-slate-400 text-center transition-colors">重置相機</button>
       </div>
 
@@ -277,7 +277,6 @@
               <select id="probe-port-select" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100">
                 <option value="subcostal">右肋下 (Right subcostal)</option>
                 <option value="subxiphoid">劍突下 (Subxiphoid)</option>
-                <option value="umbilical">臍孔 (Umbilical)</option>
                 <option value="itt">肋間經胸 ITT</option>
               </select>
             </label>
@@ -291,6 +290,10 @@
               </select>
             </label>
             <div class="text-[9px] text-slate-400">ITT 狀態：<span id="itt-status-pill" class="px-1 bg-amber-950 text-amber-300 rounded">待命</span></div>
+            <button id="btn-camera-umbilical" type="button" class="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-left hover:border-cyan-500">
+              <span class="block text-slate-200 font-bold">臍孔腹腔鏡鏡頭視角 (Umbilical laparoscope)</span>
+              <span class="block text-[9px] text-slate-400">只切換相機，不移動超音波探頭</span>
+            </button>
           </div>
 
           <div id="port-selection-summary" class="text-[9px] text-cyan-200 bg-slate-950/60 p-2 rounded border border-slate-800">
