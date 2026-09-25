@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CollisionDetector, VesselSegment } from '../math/collision';
+import { buildIllustrativeLobes } from './LiverLobeBuilder';
 
 export interface AnatomyMeshes {
   group: THREE.Group;
@@ -165,50 +166,11 @@ export class AnatomyBuilder {
     group.add(landmarks);
 
     // 4. Illustrative hepatic lobes; these are not Couinaud segment masks.
+    // A shared midline boundary keeps the two lobes continuous without overlap.
     const liverGroup = new THREE.Group();
     liverGroup.name = 'LiverParenchyma';
-
-    // These overlapping ellipsoids suggest gross lobe shape only. Their separate mesh volumes
-    // do not represent a non-overlapping 70:30 partition or patient-specific liver anatomy.
-    const rightLobeGeom = new THREE.SphereGeometry(65, 32, 24);
-    rightLobeGeom.scale(1.2, 1.1, 0.75);
-
-    const rightLobeMat = new THREE.MeshPhysicalMaterial({
-      color: 0xa8422b, // Realistic liver reddish-brown
-      roughness: 0.35,
-      metalness: 0.05,
-      transmission: 0.35,
-      transparent: true,
-      opacity: 0.72,
-      depthWrite: true,
-      clearcoat: 0.3
-    });
-    const rightLobe = new THREE.Mesh(rightLobeGeom, rightLobeMat);
-    rightLobe.name = 'IllustrativeRightLobe';
-    rightLobe.position.set(-35, 15, -10);
-    liverGroup.add(rightLobe);
-
-    // Left Lobe: S2/S3 (lateral), S4 (medial)
-    const leftLobeGeom = new THREE.SphereGeometry(60, 28, 20);
-    leftLobeGeom.scale(1.3, 0.85, 0.5);
-
-    const leftLobeMat = new THREE.MeshPhysicalMaterial({
-      color: 0x943622,
-      roughness: 0.4,
-      metalness: 0.05,
-      transmission: 0.38,
-      transparent: true,
-      opacity: 0.7,
-      depthWrite: true,
-      clearcoat: 0.25
-    });
-    const leftLobe = new THREE.Mesh(leftLobeGeom, leftLobeMat);
-    // Mirror the left-lobe placement across the patient midline.
-    leftLobe.name = 'IllustrativeLeftLobe';
-    leftLobe.position.set(38 * Math.cos(0.2) + 10 * Math.sin(0.2), -38 * Math.sin(0.2) + 10 * Math.cos(0.2), 5);
-    leftLobe.rotation.z = -0.2;
-    liverGroup.add(leftLobe);
-
+    const { rightLobe, leftLobe } = buildIllustrativeLobes();
+    liverGroup.add(rightLobe, leftLobe);
     // Diaphragmatic Dome surface indicator (for S7/S8 high dome)
     const domeCoverGeom = new THREE.SphereGeometry(68, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.35);
     domeCoverGeom.scale(1.15, 0.9, 0.75);
@@ -323,3 +285,4 @@ export class AnatomyBuilder {
     };
   }
 }
+

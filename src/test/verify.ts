@@ -14,6 +14,7 @@ import { estimateEllipsoidTargetOverlap } from '../math/coverage';
 import { FulcrumKinematics } from '../math/kinematics';
 import {
   ANTERIOR_VIEW,
+  SURGEON_VIEW,
   dicomLpsToScene,
   sceneToDicomLps
 } from '../math/patientCoordinates';
@@ -24,6 +25,7 @@ import {
   ULTRASOUND_SECTOR
 } from '../math/ultrasoundGeometry';
 import { AnatomyBuilder } from '../scene/AnatomyBuilder';
+import { containsSphereWithinIllustrativeLobe } from '../scene/LiverLobeBuilder';
 import { InstrumentBuilder } from '../scene/Instruments';
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -67,33 +69,6 @@ function getClosedMeshVolume(mesh: THREE.Mesh): number {
   }
 
   return Math.abs(signedVolume);
-}
-
-function containsSphereWithinEllipsoid(mesh: THREE.Mesh, center: THREE.Vector3, radius: number): boolean {
-  mesh.geometry.computeBoundingBox();
-  const bounds = mesh.geometry.boundingBox;
-  if (!bounds) return false;
-
-  const radii = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
-  if (Math.min(radii.x, radii.y, radii.z) <= 0) return false;
-
-  mesh.updateMatrixWorld(true);
-  const localCenter = center.clone().applyMatrix4(mesh.matrixWorld.clone().invert());
-  const localScales = new THREE.Vector3();
-  mesh.getWorldScale(localScales);
-  const localRadius = radius / Math.min(
-    Math.abs(localScales.x),
-    Math.abs(localScales.y),
-    Math.abs(localScales.z)
-  );
-  const normalizedCenterDistance = Math.sqrt(
-    (localCenter.x / radii.x) ** 2 +
-    (localCenter.y / radii.y) ** 2 +
-    (localCenter.z / radii.z) ** 2
-  );
-
-  // Conservative bound: a sphere is contained if its center plus its largest normalized radius fits.
-  return normalizedCenterDistance + localRadius / Math.min(radii.x, radii.y, radii.z) < 1;
 }
 
 function runTests() {
@@ -549,8 +524,7 @@ function runTests() {
   assertNear(wedgeAutoAlign.residualDistanceMm, 0, 1e-6, 'Wedge in-plane auto-alignment distance residual must be zero');
   assertNear(wedgeAutoAlign.residualAngleDeg, 0, 1e-6, 'Wedge in-plane auto-alignment angle residual must be zero');
 
-  // Compare rendered ellipsoid meshes, not hard-coded radii. Their 70:30 standalone
-  // mesh-volume ratio is a shape cue only because the translucent lobes overlap.
+  // Validate the non-overlapping illustrative lobe meshes and the operating-view projection.
   const anatomy = AnatomyBuilder.build();
   const rightLobeMesh = anatomy.liverGroup.getObjectByName('IllustrativeRightLobe');
   const leftLobeMesh = anatomy.liverGroup.getObjectByName('IllustrativeLeftLobe');
@@ -567,12 +541,17 @@ function runTests() {
   assert(rightSideLabel.position.x < 0, 'R marker must be on the patient-right side.');
   assert(leftSideLabel.position.x > 0, 'L marker must be on the patient-left side.');
 
+  const rightBounds = new THREE.Box3().setFromObject(rightLobeMesh);
+  const leftBounds = new THREE.Box3().setFromObject(leftLobeMesh);
+  assertNear(rightBounds.max.x, leftBounds.min.x, 1e-4, 'Illustrative lobes must share one non-overlapping midline boundary');
+  assert(rightBounds.min.x < rightBounds.max.x && leftBounds.min.x < leftBounds.max.x, 'Both illustrative lobe meshes must have nonzero width.');
+
   const volRightMesh = getClosedMeshVolume(rightLobeMesh);
   const volLeftMesh = getClosedMeshVolume(leftLobeMesh);
   const rightMeshRatio = volRightMesh / (volRightMesh + volLeftMesh);
   const leftMeshRatio = volLeftMesh / (volRightMesh + volLeftMesh);
-  assert(rightMeshRatio >= 0.65 && rightMeshRatio <= 0.75, `Standalone right-lobe mesh volume should be ~70% of the two ellipsoid volumes (got ${(rightMeshRatio * 100).toFixed(1)}%)`);
-  assert(leftMeshRatio >= 0.25 && leftMeshRatio <= 0.35, `Standalone left-lobe mesh volume should be ~30% of the two ellipsoid volumes (got ${(leftMeshRatio * 100).toFixed(1)}%)`);
+  assert(rightMeshRatio >= 0.69 && rightMeshRatio <= 0.71, 'Right-lobe mesh volume should preserve a 70:30 split (got ' + (rightMeshRatio * 100).toFixed(1) + '%).');
+  assert(leftMeshRatio >= 0.29 && leftMeshRatio <= 0.31, 'Left-lobe mesh volume should preserve a 70:30 split (got ' + (leftMeshRatio * 100).toFixed(1) + '%).');
 
   const lobeForPreset: Record<string, THREE.Mesh> = {
     S2_S3: leftLobeMesh,
@@ -582,13 +561,22 @@ function runTests() {
   assert(Object.keys(lobeForPreset).length === Object.keys(LESION_PRESETS).length, 'Every lesion preset must have an explicit illustrative lobe mapping.');
   for (const [presetId, preset] of Object.entries(LESION_PRESETS)) {
     const lobe = lobeForPreset[presetId];
-    assert(lobe instanceof THREE.Mesh, `${presetId} must map to an illustrative lobe mesh.`);
+    assert(lobe instanceof THREE.Mesh, presetId + ' must map to an illustrative lobe mesh.');
     assert(
-      containsSphereWithinEllipsoid(lobe, preset.tumorPosition, preset.tumorDiameter * 0.5),
-      `${presetId} full tumor sphere must fit within its illustrative lobe.`
+      containsSphereWithinIllustrativeLobe(lobe, preset.tumorPosition, preset.tumorDiameter * 0.5),
+      presetId + ' full tumor sphere must fit within its illustrative lobe.'
     );
   }
 
+  const surgeonCamera = new THREE.PerspectiveCamera(45, 1, 1, 1500);
+  surgeonCamera.position.set(...SURGEON_VIEW.position);
+  surgeonCamera.up.set(...SURGEON_VIEW.up);
+  surgeonCamera.lookAt(...SURGEON_VIEW.target);
+  surgeonCamera.updateMatrixWorld(true);
+  const rightCenter = rightBounds.getCenter(new THREE.Vector3()).project(surgeonCamera);
+  const leftCenter = leftBounds.getCenter(new THREE.Vector3()).project(surgeonCamera);
+  assert(rightCenter.x < 0, 'In the operating view, patient-right must project to screen-left.');
+  assert(leftCenter.x > 0, 'In the operating view, patient-left must project to screen-right.');
   console.log('PASS: kinematics round-trip and pitch sign');
   console.log('PASS: rendered needle, ultrasound plane, and ablation ellipsoid share world coordinates');
   console.log('PASS: lesion intersection, finite fan, and fixed-entry auto-align feasibility');
@@ -599,7 +587,8 @@ function runTests() {
   console.log('PASS: needle-shaft surface clearance and vessel warnings');
   console.log('PASS: right-angle wedge optimizer point C calculation and in-plane coplanarity');
   console.log('PASS: DICOM LPS conversion and patient right/left scene orientation');
-  console.log('PASS: illustrative lobe mesh proportions and complete tumor containment for every preset');
+  console.log('PASS: non-overlapping illustrative lobe meshes preserve 70:30 proportions, tumor containment, and surgeon-view orientation');
 }
 
 runTests();
+
