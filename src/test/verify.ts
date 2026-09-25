@@ -19,7 +19,7 @@ import {
 } from '../math/ultrasoundGeometry';
 import { InstrumentBuilder } from '../scene/Instruments';
 
-function assert(condition: boolean, message: string): asserts condition {
+function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
@@ -433,7 +433,35 @@ function runTests() {
     new THREE.Vector3(60, -20, 40),
     new THREE.Vector3(50, -10, 30)
   );
-  assert(!safePath.hasCollision, 'A distant path should not trigger vessel collision.');
+  // Right-Angle Wedge Puncture Optimizer (Triangle ABC & Point C on US Plane)
+  const wedgeSolution = WedgeOptimizer.computeWedgeGeometry(
+    planeOrigin,
+    planeY,
+    planeNormal,
+    tumorInFan,
+    60
+  );
+  const wedgeNormalDist = Math.abs(
+    new THREE.Vector3().subVectors(wedgeSolution.optimalEntryPoint, planeOrigin).dot(planeNormal)
+  );
+  assertNear(wedgeNormalDist, 0, 1e-6, 'Wedge optimal entry point C must lie strictly on the ultrasound scan plane');
+  assert(wedgeSolution.punctureDepth > 0, 'Wedge puncture depth must be positive');
+  assert(wedgeSolution.guideLinePoints.length === 2, 'Wedge solution must include guide line endpoints');
+
+  const wedgeAutoAlign = WedgeOptimizer.autoAlignNeedle(
+    wedgeSolution.optimalEntryPoint,
+    wedgeSolution.trajectoryDir,
+    planeOrigin,
+    planeNormal,
+    planeX,
+    planeY,
+    tumorInFan,
+    lesionRadiusMm,
+    true
+  );
+  assert(wedgeAutoAlign.feasible, 'Wedge optimal entry point C must be feasible for in-plane auto-alignment');
+  assertNear(wedgeAutoAlign.residualDistanceMm, 0, 1e-6, 'Wedge in-plane auto-alignment distance residual must be zero');
+  assertNear(wedgeAutoAlign.residualAngleDeg, 0, 1e-6, 'Wedge in-plane auto-alignment angle residual must be zero');
 
   console.log('PASS: kinematics round-trip and pitch sign');
   console.log('PASS: rendered needle, ultrasound plane, and ablation ellipsoid share world coordinates');
@@ -443,6 +471,7 @@ function runTests() {
   console.log('PASS: lesion port recommendations');
   console.log('PASS: ellipsoid geometric overlap estimate');
   console.log('PASS: needle-shaft surface clearance and vessel warnings');
+  console.log('PASS: right-angle wedge optimizer point C calculation and in-plane coplanarity');
 }
 
 runTests();

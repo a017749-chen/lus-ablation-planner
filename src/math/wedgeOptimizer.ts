@@ -74,17 +74,17 @@ export class WedgeOptimizer {
       .addScaledVector(beamDir, -depthAlongBeam)
       .addScaledVector(lateralDir, Math.sign(lateralOffset || 1) * Math.max(30, Math.abs(lateralOffset) + entryDistance * 0.4));
 
-    // Trajectory vector from entry to tumor
-    const trajectoryVec = new THREE.Vector3().subVectors(tumorCenter, optimalEntryPoint);
+    // Trajectory vector from entry to tumor on the scan plane
+    const trajectoryVec = new THREE.Vector3().subVectors(projectedTumor, optimalEntryPoint);
     const punctureDepth = trajectoryVec.length();
     const trajectoryDir = trajectoryVec.clone().normalize();
 
     const guideStart = optimalEntryPoint.clone();
-    const guideEnd = tumorCenter.clone().addScaledVector(trajectoryDir, 20); // Extends 20mm past tumor
+    const guideEnd = projectedTumor.clone().addScaledVector(trajectoryDir, 20); // Extends 20mm past tumor
 
     return {
       optimalEntryPoint,
-      targetPoint: tumorCenter.clone(),
+      targetPoint: projectedTumor.clone(),
       trajectoryDir,
       punctureDepth,
       longitudinalAngleDeg,
