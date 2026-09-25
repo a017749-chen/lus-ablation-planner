@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LUS-Ablation 3D Planner | 腹腔鏡超音波導引肝腫瘤穿刺消融手術規劃系統</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300ff66'><circle cx='12' cy='12' r='9'/></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-[#060a10] text-slate-100 flex flex-col h-screen w-screen overflow-hidden">
+
+  <!-- TOP SURGICAL HUD HEADER -->
+  <header class="h-14 bg-[#0a101b] border-b border-[#1c2c42] flex items-center justify-between px-4 z-40 shrink-0 select-none">
+    <!-- Brand / System Title -->
+    <div class="flex items-center space-x-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-emerald-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+        <svg class="w-5 h-5 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
+        </svg>
+      </div>
+      <div>
+        <div class="flex items-center space-x-2">
+          <h1 class="text-sm font-bold tracking-wider text-cyan-400 font-mono">LUS-ABLATION 3D PLANNER</h1>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">CAS SUITE v2.4</span>
+        </div>
+        <p class="text-[10px] text-slate-400 font-mono">Laparoscopic Ultrasound-Guided Hepatic Radiofrequency Ablation System</p>
+      </div>
+    </div>
+
+    <!-- Live Surgical Telemetry Bar -->
+    <div class="flex items-center space-x-3">
+      <!-- In-Plane Status Indicator (Primary Clinical Target) -->
+      <div id="hud-alignment-card" class="flex items-center space-x-2 px-3 py-1.5 rounded-md border transition-all duration-300 bg-red-950/40 border-red-500/60 text-red-400">
+        <div id="hud-alignment-dot" class="w-2.5 h-2.5 rounded-full bg-red-500 shadow-sm animate-pulse"></div>
+        <div class="flex flex-col">
+          <span class="text-[9px] uppercase tracking-wider text-slate-400 font-mono font-semibold">US Alignment (2°/1mm)</span>
+          <span id="hud-alignment-text" class="text-xs font-bold font-mono tracking-tight text-red-400">OUT-OF-PLANE</span>
+        </div>
+        <span id="hud-alignment-offset" class="text-[11px] font-mono font-bold ml-1 bg-black/40 px-1.5 py-0.5 rounded text-red-300">Δ 14.8 mm</span>
+      </div>
+
+      <!-- Vessel Clearance Telemetry -->
+      <div class="hidden md:flex items-center space-x-3 px-3 py-1.5 bg-[#0e1726] border border-[#1e2f47] rounded-md font-mono text-xs">
+        <div class="flex items-center space-x-1.5">
+          <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+          <span class="text-slate-400 text-[10px]">IVC dist:</span>
+          <span id="hud-ivc-dist" class="font-bold text-cyan-300">22.4 mm</span>
+        </div>
+        <div class="w-px h-4 bg-slate-700"></div>
+        <div class="flex items-center space-x-1.5">
+          <span class="w-2 h-2 rounded-full bg-purple-500"></span>
+          <span class="text-slate-400 text-[10px]">PV dist:</span>
+          <span id="hud-pv-dist" class="font-bold text-cyan-300">18.6 mm</span>
+        </div>
+        <div id="hud-vessel-alert" class="hidden px-1.5 py-0.5 rounded bg-red-600/80 text-white font-bold text-[9px] animate-pulse">
+          COLLISION ALERT
+        </div>
+      </div>
+
+      <!-- Ablation Margin Coverage Metric -->
+      <div class="flex items-center space-x-2 px-3 py-1.5 bg-[#0e1726] border border-[#1e2f47] rounded-md font-mono text-xs">
+        <div class="flex flex-col text-right">
+          <span class="text-[9px] text-slate-400 uppercase">Margin Coverage (5mm)</span>
+          <span id="hud-coverage-percent" class="font-bold text-amber-400 text-xs">0% (PREVIEW OFF)</span>
+        </div>
+        <div class="w-8 h-8 rounded-full border border-slate-700 flex items-center justify-center bg-black/40">
+          <svg class="w-6 h-6 transform -rotate-90">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" class="text-slate-800" fill="none" />
+            <circle id="hud-coverage-ring" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2.5" class="text-amber-400 transition-all duration-300" stroke-dasharray="62.8" stroke-dashoffset="62.8" fill="none" />
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Lesion Segment Selector & Help -->
+    <div class="flex items-center space-x-2">
+      <div class="flex bg-slate-900/90 p-1 rounded-lg border border-slate-800 text-[11px] font-mono">
+        <button id="preset-btn-s2s3" class="px-2.5 py-1 rounded transition-colors text-slate-400 hover:text-white" title="S2/S3 左外側葉病灶">S2/S3 左葉</button>
+        <button id="preset-btn-s5s6" class="px-2.5 py-1 rounded transition-colors bg-cyan-600 text-white font-semibold shadow-sm" title="S5/S6 典型右葉前下病灶">S5/S6 右葉</button>
+        <button id="preset-btn-s7s8" class="px-2.5 py-1 rounded transition-colors text-amber-400 hover:text-amber-200 flex items-center space-x-1" title="S7/S8 橫膈圓頂病灶 (啟用肋間 ITT 入路)">
+          <span>S7/S8 穹頂</span>
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+        </button>
+      </div>
+      <button id="btn-toggle-drawer" class="p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors" title="開啟/關閉控制面板">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN OPERATING WORKSPACE -->
+  <main class="relative flex-1 w-full h-[calc(100vh-3.5rem)] flex overflow-hidden">
+    
+    <!-- LEFT FLOATING TOOLBAR -->
+    <div class="absolute left-3 top-3 z-30 flex flex-col space-y-2 pointer-events-auto">
+      <!-- Camera Angle Presets -->
+      <div class="med-panel p-1.5 rounded-lg flex flex-col space-y-1">
+        <span class="text-[9px] font-mono text-slate-400 px-1 text-center font-bold">VIEW</span>
+        <button id="btn-cam-ap" class="px-2 py-1 text-[11px] font-mono rounded bg-slate-800 hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-300 text-left transition-colors" title="前後位 Anteroposterior">AP 正視角</button>
+        <button id="btn-cam-lateral" class="px-2 py-1 text-[11px] font-mono rounded hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-400 text-left transition-colors" title="右側位 Right Lateral">RL 側視角</button>
+        <button id="btn-cam-superior" class="px-2 py-1 text-[11px] font-mono rounded hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-400 text-left transition-colors" title="頭頂軸位 Superior Axial">AX 軸頂角</button>
+        <button id="btn-cam-surgeon" class="px-2 py-1 text-[11px] font-mono rounded hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-400 text-left transition-colors" title="主刀醫師站位視角">Surgeon 主刀</button>
+        <button id="btn-cam-reset" class="px-2 py-1 text-[10px] font-mono rounded border border-slate-700/60 hover:bg-slate-700 text-slate-400 text-center transition-colors">重置相機</button>
+      </div>
+
+      <!-- Layer Visibility Toggles -->
+      <div class="med-panel p-2 rounded-lg flex flex-col space-y-1.5 text-[11px] font-mono">
+        <span class="text-[9px] text-slate-400 font-bold uppercase tracking-wider text-center">LAYERS</span>
+        <label class="flex items-center space-x-2 cursor-pointer text-slate-300 hover:text-white">
+          <input type="checkbox" id="layer-dome" checked class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0">
+          <span>腹壁穹頂</span>
+        </label>
+        <label class="flex items-center space-x-2 cursor-pointer text-slate-300 hover:text-white">
+          <input type="checkbox" id="layer-liver" checked class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0">
+          <span>肝臟分段</span>
+        </label>
+        <label class="flex items-center space-x-2 cursor-pointer text-slate-300 hover:text-white">
+          <input type="checkbox" id="layer-vessels" checked class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0">
+          <span>IVC / 門靜脈</span>
+        </label>
+        <label class="flex items-center space-x-2 cursor-pointer text-slate-300 hover:text-white">
+          <input type="checkbox" id="layer-usslice" checked class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0">
+          <span>超音波扇面 (1.5mm)</span>
+        </label>
+        <label class="flex items-center space-x-2 cursor-pointer text-slate-300 hover:text-white">
+          <input type="checkbox" id="layer-margin" checked class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0">
+          <span>安全邊界 (5mm)</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- PRIMARY 3D CAS VIEWPORT -->
+    <div id="webgl-container" class="relative flex-1 h-full w-full bg-[#05080e]">
+      <!-- 3D Canvas will be mounted here -->
+
+      <!-- Center Reticle / Coordinate Crosshair (Subtle overlay) -->
+      <div class="absolute inset-0 pointer-events-none flex items-center justify-center opacity-15">
+        <div class="w-32 h-32 border border-cyan-400 rounded-full flex items-center justify-center">
+          <div class="w-2 h-2 bg-cyan-400 rounded-full"></div>
+        </div>
+      </div>
+
+      <!-- Quick Floating Status Card in 3D scene -->
+      <div class="absolute bottom-4 left-4 z-20 pointer-events-auto med-panel p-2.5 rounded-lg flex items-center space-x-3 text-xs font-mono">
+        <div class="flex flex-col">
+          <span class="text-[9px] text-slate-400">NEEDLE TIP [X, Y, Z]</span>
+          <span id="scene-tip-coord" class="font-bold text-cyan-300">X: 25.4, Y: 110.2, Z: -15.8</span>
+        </div>
+        <div class="w-px h-6 bg-slate-700"></div>
+        <div class="flex flex-col">
+          <span class="text-[9px] text-slate-400">INSERTION DEPTH</span>
+          <span id="scene-needle-depth" class="font-bold text-emerald-400">82.5 mm</span>
+        </div>
+        <div class="w-px h-6 bg-slate-700"></div>
+        <button id="btn-quick-auto-align" class="px-2.5 py-1 rounded bg-emerald-600/90 hover:bg-emerald-500 text-black font-bold text-[11px] shadow-glow-neon flex items-center space-x-1.5 transition-all">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          <span>一鍵自動回正 (Auto-Align)</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- BOTTOM-RIGHT DUAL SUBVIEWS (Laparoscope & 2D B-Mode Ultrasound) -->
+    <div id="subviews-container" class="absolute bottom-4 right-4 z-30 flex flex-col space-y-3 pointer-events-auto">
+      
+      <!-- SUBVIEW 1: Laparoscopic Camera View -->
+      <div class="w-80 h-52 med-panel rounded-xl overflow-hidden flex flex-col shadow-2xl relative border border-slate-700/80">
+        <div class="h-6 med-panel-header px-2 flex items-center justify-between z-10">
+          <div class="flex items-center space-x-1.5">
+            <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+            <span class="text-[10px] font-mono font-bold tracking-wider text-cyan-300">LAPAROSCOPIC CAM (30° SCOPE)</span>
+          </div>
+          <span class="text-[9px] font-mono text-slate-400">PORT: Umbilical (10mm)</span>
+        </div>
+        <!-- Laparoscope Render Container -->
+        <div id="laparoscope-viewport" class="relative flex-1 w-full h-full bg-black overflow-hidden">
+          <!-- Circular Laparoscopic Scope Mask -->
+          <div class="absolute inset-0 pointer-events-none rounded-full border-[18px] border-[#080d14]/90 shadow-inner"></div>
+          <div class="absolute inset-0 pointer-events-none view-reticle opacity-30"></div>
+          <div class="absolute bottom-1 right-2 pointer-events-none text-[8px] font-mono text-cyan-500/70">OPTICAL ZOOM 1.0x</div>
+        </div>
+      </div>
+
+      <!-- SUBVIEW 2: Real-time 2D B-Mode Ultrasound View -->
+      <div class="w-80 h-64 med-panel rounded-xl overflow-hidden flex flex-col shadow-2xl relative border border-slate-700/80">
+        <div class="h-6 med-panel-header px-2 flex items-center justify-between z-10">
+          <div class="flex items-center space-x-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="text-[10px] font-mono font-bold tracking-wider text-emerald-300">B-MODE ULTRASOUND (7.5 MHz)</span>
+          </div>
+          <div class="flex items-center space-x-1 text-[9px] font-mono text-slate-400">
+            <span>THICKNESS: 1.5mm</span>
+          </div>
+        </div>
+        <!-- Ultrasound Canvas -->
+        <div class="relative flex-1 w-full h-full bg-black overflow-hidden flex items-center justify-center">
+          <canvas id="us-canvas" width="320" height="232" class="w-full h-full block bg-black"></canvas>
+          <!-- Ultrasound HUD Overlay -->
+          <div class="absolute top-1 left-2 pointer-events-none font-mono text-[9px] text-emerald-400/90 space-y-0.5">
+            <div>GAIN: 68dB  MI: 0.8  TIS: 0.4</div>
+            <div>FPS: 30Hz  DEPTH: 10.0cm</div>
+          </div>
+          <div id="us-hud-needle-status" class="absolute top-1 right-2 pointer-events-none font-mono text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-500 text-emerald-300">
+            GUIDE: ACTIVE
+          </div>
+          <div class="absolute bottom-1 left-2 pointer-events-none font-mono text-[8px] text-slate-500">
+            [GE Healthcare / Hitachi LUS Mimic]
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT EXPANDABLE CLINICAL CONTROL DRAWER -->
+    <aside id="control-drawer" class="w-96 h-full bg-[#0a101b]/95 border-l border-[#1c2c42] z-30 flex flex-col overflow-y-auto overflow-x-hidden backdrop-blur-md transition-all duration-300 shadow-2xl">
+      
+      <!-- Drawer Header -->
+      <div class="p-3 border-b border-[#1c2c42] flex items-center justify-between bg-slate-900/50">
+        <div class="flex items-center space-x-2">
+          <svg class="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          <span class="text-xs font-mono font-bold tracking-wider text-slate-200">SURGICAL KINEMATICS & PLANNING</span>
+        </div>
+        <span class="text-[10px] font-mono text-cyan-400 bg-cyan-950/70 border border-cyan-800/80 px-1.5 py-0.5 rounded">4-DOF FULCRUM</span>
+      </div>
+
+      <div class="p-4 space-y-5 text-xs font-mono">
+
+        <!-- SECTION 1: TARGET LESION SPECIFICATION -->
+        <div class="space-y-2.5 p-3 rounded-lg bg-slate-900/60 border border-slate-800">
+          <div class="flex items-center justify-between text-slate-300 font-bold border-b border-slate-800 pb-1.5">
+            <span class="flex items-center space-x-1.5">
+              <span class="w-2 h-2 rounded-full bg-red-500"></span>
+              <span>1. 目標腫瘤與安全邊界 (Tumor & Margin)</span>
+            </span>
+            <span id="label-active-segment" class="text-cyan-400 text-[10px]">Segment S5/S6</span>
+          </div>
+
+          <!-- Tumor Diameter Slider -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">腫瘤直徑 (Diameter):</span>
+              <span id="val-tumor-dia" class="font-bold text-slate-200">20.0 mm</span>
+            </div>
+            <input type="range" id="input-tumor-dia" min="10" max="40" step="1" value="20" class="w-full">
+          </div>
+
+          <!-- Safety Margin Slider -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">安全消融邊界 (Safety Margin):</span>
+              <span id="val-margin-dist" class="font-bold text-amber-300">+5.0 mm</span>
+            </div>
+            <input type="range" id="input-margin-dist" min="2" max="10" step="0.5" value="5.0" class="w-full">
+          </div>
+        </div>
+
+        <!-- SECTION 2: TROCAR ENTRY PORTS & FULCRUM -->
+        <div class="space-y-2.5 p-3 rounded-lg bg-slate-900/60 border border-slate-800">
+          <div class="flex items-center justify-between text-slate-300 font-bold border-b border-slate-800 pb-1.5">
+            <span class="flex items-center space-x-1.5">
+              <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+              <span>2. 腹腔鏡套管佈局 (Trocar Ports)</span>
+            </span>
+          </div>
+
+          <!-- Trocar selection radio -->
+          <div class="grid grid-cols-2 gap-1.5 text-[10px]">
+            <button id="btn-trocar-umbilical" class="p-1.5 rounded border border-slate-700 bg-slate-800/80 text-left hover:border-cyan-500 transition-colors">
+              <div class="text-cyan-400 font-bold">1. 臍孔 (Umbilical)</div>
+              <div class="text-slate-400 text-[9px]">10mm 腹腔鏡視角</div>
+            </button>
+            <button id="btn-trocar-subxiphoid" class="p-1.5 rounded border border-slate-700 bg-slate-800/80 text-left hover:border-cyan-500 transition-colors">
+              <div class="text-slate-300 font-bold">2. 劍突下 (Subxiphoid)</div>
+              <div class="text-slate-400 text-[9px]">5mm 輔助通道</div>
+            </button>
+            <button id="btn-trocar-subcostal" class="p-1.5 rounded border border-cyan-500 bg-cyan-950/40 text-left shadow-sm">
+              <div class="text-cyan-300 font-bold">3. 右肋下 (R-Subcostal)</div>
+              <div class="text-slate-400 text-[9px]">12mm LUS 探頭主套管</div>
+            </button>
+            <button id="btn-trocar-itt" class="p-1.5 rounded border border-amber-800/60 bg-slate-900 text-left opacity-60 hover:opacity-100 transition-opacity">
+              <div class="text-amber-400 font-bold flex items-center space-x-1">
+                <span>4. 肋間經胸 (ITT)</span>
+                <span id="itt-status-pill" class="text-[8px] px-1 bg-amber-950 text-amber-300 rounded">待命</span>
+              </div>
+              <div class="text-slate-400 text-[9px]">S7/S8 橫膈穹頂專用</div>
+            </button>
+          </div>
+
+          <div class="text-[10px] text-slate-400 bg-slate-950/60 p-2 rounded border border-slate-800">
+            <span class="text-cyan-400 font-bold">支點約束效應 (Fulcrum Kinematics)：</span>
+            套管於腹壁為固定轉動原點，器械保留 4 自由度（Pitch, Yaw, Depth, Roll）。
+          </div>
+        </div>
+
+        <!-- SECTION 3: LUS PROBE ARTICULATION CONTROLS -->
+        <div class="space-y-2.5 p-3 rounded-lg bg-slate-900/60 border border-slate-800">
+          <div class="flex items-center justify-between text-slate-300 font-bold border-b border-slate-800 pb-1.5">
+            <span class="flex items-center space-x-1.5">
+              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+              <span>3. 腹腔鏡超音波探頭 (LUS Probe)</span>
+            </span>
+            <span class="text-[10px] text-emerald-400">Articulating Tip</span>
+          </div>
+
+          <!-- Probe Insertion Depth -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">探頭穿刺深度 (Depth):</span>
+              <span id="val-probe-depth" class="font-bold text-slate-200">125 mm</span>
+            </div>
+            <input type="range" id="input-probe-depth" min="50" max="220" step="1" value="125" class="w-full">
+          </div>
+
+          <!-- Probe Articulating Tip Pitch -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">頭端俯仰角 (Tip Pitch):</span>
+              <span id="val-probe-pitch" class="font-bold text-emerald-400">25.0°</span>
+            </div>
+            <input type="range" id="input-probe-pitch" min="-60" max="60" step="1" value="25" class="w-full">
+          </div>
+
+          <!-- Probe Articulating Tip Yaw -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">頭端偏擺角 (Tip Yaw):</span>
+              <span id="val-probe-yaw" class="font-bold text-emerald-400">10.0°</span>
+            </div>
+            <input type="range" id="input-probe-yaw" min="-60" max="60" step="1" value="10" class="w-full">
+          </div>
+
+          <!-- Probe Shaft Roll -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">桿身自轉角 (Shaft Roll):</span>
+              <span id="val-probe-roll" class="font-bold text-emerald-400">0.0°</span>
+            </div>
+            <input type="range" id="input-probe-roll" min="-180" max="180" step="2" value="0" class="w-full">
+          </div>
+        </div>
+
+        <!-- SECTION 4: ABLATION NEEDLE KINEMATICS & ALIGNMENT -->
+        <div class="space-y-2.5 p-3 rounded-lg bg-slate-900/60 border border-slate-800">
+          <div class="flex items-center justify-between text-slate-300 font-bold border-b border-slate-800 pb-1.5">
+            <span class="flex items-center space-x-1.5">
+              <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+              <span>4. 消融穿刺針調校 (Ablation Needle)</span>
+            </span>
+            <div class="flex bg-slate-800 rounded p-0.5 text-[9px]">
+              <button id="needle-mode-trocar" class="px-2 py-0.5 rounded bg-cyan-700 text-white font-bold">套管進針</button>
+              <button id="needle-mode-percutaneous" class="px-2 py-0.5 rounded text-slate-400 hover:text-white">經皮穿刺</button>
+            </div>
+          </div>
+
+          <!-- Needle Pitch Adjustment -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">針體俯仰 (Pitch Angle):</span>
+              <span id="val-needle-pitch" class="font-bold text-amber-300">42.0°</span>
+            </div>
+            <input type="range" id="input-needle-pitch" min="-80" max="80" step="0.5" value="42" class="w-full">
+          </div>
+
+          <!-- Needle Yaw Adjustment -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">針體偏擺 (Yaw Angle):</span>
+              <span id="val-needle-yaw" class="font-bold text-amber-300">-15.0°</span>
+            </div>
+            <input type="range" id="input-needle-yaw" min="-80" max="80" step="0.5" value="-15" class="w-full">
+          </div>
+
+          <!-- Needle Penetration Depth -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">針尖穿刺深度 (Depth):</span>
+              <span id="val-needle-depth" class="font-bold text-amber-300">85.0 mm</span>
+            </div>
+            <input type="range" id="input-needle-depth" min="10" max="180" step="1" value="85" class="w-full">
+          </div>
+
+          <!-- AUTO-ALIGN BUTTON -->
+          <div class="pt-1">
+            <button id="btn-auto-align" class="w-full py-2.5 rounded-lg bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-black font-extrabold text-xs shadow-glow-neon flex items-center justify-center space-x-2 transition-all active:scale-[0.98]">
+              <svg class="w-4 h-4 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>一鍵自動回正 (Auto-Align to US Plane)</span>
+            </button>
+            <p class="text-[9px] text-slate-400 text-center mt-1">直角楔形穿刺優化器：自動微調針體姿態，瞬間切入當前超音波切面軸線</p>
+          </div>
+        </div>
+
+        <!-- SECTION 5: THERMAL ABLATION ZONE SIMULATION -->
+        <div class="space-y-2.5 p-3 rounded-lg bg-slate-900/60 border border-slate-800">
+          <div class="flex items-center justify-between text-slate-300 font-bold border-b border-slate-800 pb-1.5">
+            <span class="flex items-center space-x-1.5">
+              <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+              <span>5. 熱消融壞死區模擬 (Thermal Ablation)</span>
+            </span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="toggle-ablation-sim" class="sr-only peer">
+              <div class="w-8 h-4 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-rose-600"></div>
+            </label>
+          </div>
+
+          <!-- Ablation Sphere Diameter -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">消融球體直徑 (Necrosis Dia):</span>
+              <span id="val-ablation-dia" class="font-bold text-rose-400">35.0 mm</span>
+            </div>
+            <input type="range" id="input-ablation-dia" min="20" max="55" step="1" value="35" class="w-full">
+          </div>
+
+          <!-- Thermal Margin Assessment Box -->
+          <div class="p-2.5 rounded bg-black/40 border border-slate-800 space-y-1 text-[10px]">
+            <div class="flex justify-between">
+              <span class="text-slate-400">54°C 凝固壞死半徑:</span>
+              <span id="ablation-rad-necrosis" class="text-rose-400 font-bold">17.5 mm</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-400">腫瘤邊界完全覆蓋率:</span>
+              <span id="ablation-coverage-stat" class="text-emerald-400 font-bold">100% (完全根治)</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-400">最靠近血管最小間隔:</span>
+              <span id="ablation-vessel-clearance" class="text-cyan-400 font-bold">12.3 mm (安全)</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </aside>
+
+  </main>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
