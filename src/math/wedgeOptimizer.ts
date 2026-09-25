@@ -1,13 +1,20 @@
 import * as THREE from 'three';
 import { FulcrumKinematics } from './kinematics';
+import {
+  closestPointInUltrasoundSector,
+  getSphereSlabIntersection,
+  isPointInUltrasoundSector,
+  ULTRASOUND_SECTOR,
+  UltrasoundSectorBounds
+} from './ultrasoundGeometry';
 
 export interface AutoAlignNeedleSolution {
   feasible: boolean;
   pitch?: number;
   yaw?: number;
   depth?: number;
-  adjustedPivot?: THREE.Vector3;
   targetDir?: THREE.Vector3;
+  targetPoint?: THREE.Vector3;
   residualDistanceMm: number;
   residualAngleDeg: number;
   reason?: string;
@@ -99,44 +106,94 @@ export class WedgeOptimizer {
     planeXAxis: THREE.Vector3,
     planeYAxis: THREE.Vector3,
     tumorCenter: THREE.Vector3,
-    isPercutaneous: boolean = false
+    tumorRadiusMm: number,
+    isPercutaneous: boolean = false,
+    sectorBounds: UltrasoundSectorBounds = ULTRASOUND_SECTOR
   ): AutoAlignNeedleSolution {
     const n = planeNormal.clone().normalize();
+    const xAxis = planeXAxis.clone().normalize();
+    const yAxis = planeYAxis.clone().normalize();
     const pivotOffset = new THREE.Vector3().subVectors(needlePivot, planeOrigin).dot(n);
-    const tumorOffset = new THREE.Vector3().subVectors(tumorCenter, planeOrigin).dot(n);
-    const alignedTumor = tumorCenter.clone().addScaledVector(n, -tumorOffset);
+    const pivotResidual = Math.abs(pivotOffset);
 
-    if (!isPercutaneous && Math.abs(pivotOffset) > WedgeOptimizer.PLANE_DISTANCE_TOLERANCE_MM) {
-      const direction = new THREE.Vector3().subVectors(alignedTumor, needlePivot).normalize();
-      const residualAngleDeg = Number.isFinite(direction.lengthSq())
-        ? THREE.MathUtils.radToDeg(Math.asin(THREE.MathUtils.clamp(Math.abs(direction.dot(n)), 0, 1)))
+    const fail = (residualDistanceMm: number, residualAngleDeg: number, reason: string): AutoAlignNeedleSolution => ({
+      feasible: false,
+      residualDistanceMm,
+      residualAngleDeg,
+      reason
+    });
+
+    if (pivotResidual > WedgeOptimizer.PLANE_DISTANCE_TOLERANCE_MM) {
+      const targetDirection = new THREE.Vector3().subVectors(tumorCenter, needlePivot).normalize();
+      const angle = Number.isFinite(targetDirection.lengthSq())
+        ? THREE.MathUtils.radToDeg(Math.asin(THREE.MathUtils.clamp(Math.abs(targetDirection.dot(n)), 0, 1)))
         : 0;
-      return {
-        feasible: false,
-        residualDistanceMm: Math.abs(pivotOffset),
-        residualAngleDeg,
-        reason: `Fixed trocar pivot is ${Math.abs(pivotOffset).toFixed(1)} mm outside the ultrasound plane.`
-      };
+      const pivotName = isPercutaneous ? 'Fixed percutaneous entry' : 'Fixed trocar pivot';
+      return fail(
+        pivotResidual,
+        angle,
+        `${pivotName} is ${pivotResidual.toFixed(1)} mm outside the ultrasound plane; the entry point was not moved.`
+      );
     }
 
-    // In percutaneous mode, the entry point may move onto the scan plane.
-    const alignedPivot = isPercutaneous
-      ? needlePivot.clone().addScaledVector(n, -pivotOffset)
-      : needlePivot.clone();
-    const targetVector = new THREE.Vector3().subVectors(alignedTumor, alignedPivot);
+    if (!Number.isFinite(tumorRadiusMm) || tumorRadiusMm <= 0) {
+      return fail(pivotResidual, 0, 'Tumor radius must be a positive finite value.');
+    }
+
+    const tumorOffset = new THREE.Vector3().subVectors(tumorCenter, planeOrigin).dot(n);
+    const lesionSlice = getSphereSlabIntersection(tumorRadiusMm, tumorOffset, 0);
+    if (!lesionSlice.visible) {
+      const gap = Math.abs(tumorOffset) - tumorRadiusMm;
+      return fail(
+        Math.max(pivotResidual, gap),
+        0,
+        `The lesion is ${gap.toFixed(1)} mm outside the scan plane; no lesion-plane intersection exists.`
+      );
+    }
+
+    const projectedTumor = tumorCenter.clone().addScaledVector(n, -tumorOffset);
+    const projectedOffset = new THREE.Vector3().subVectors(projectedTumor, planeOrigin);
+    const tumorLateral = projectedOffset.dot(xAxis);
+    const tumorDepth = projectedOffset.dot(yAxis);
+    const fanPoint = closestPointInUltrasoundSector(tumorLateral, tumorDepth, sectorBounds);
+    if (fanPoint.distanceMm > lesionSlice.crossSectionRadiusMm + 1e-8) {
+      const gap = fanPoint.distanceMm - lesionSlice.crossSectionRadiusMm;
+      return fail(
+        Math.max(pivotResidual, gap),
+        0,
+        `The lesion-plane intersection misses the finite ultrasound fan by ${gap.toFixed(1)} mm.`
+      );
+    }
+
+    const targetPoint = planeOrigin.clone()
+      .addScaledVector(xAxis, fanPoint.lateralMm)
+      .addScaledVector(yAxis, fanPoint.depthMm);
+    if (targetPoint.distanceTo(tumorCenter) > tumorRadiusMm + 1e-6) {
+      return fail(pivotResidual, 0, 'No point inside the lesion lies within the finite ultrasound fan.');
+    }
+
+    const targetVector = new THREE.Vector3().subVectors(targetPoint, needlePivot);
     const depth = targetVector.length();
-    if (depth <= 0.001) {
-      return {
-        feasible: false,
-        residualDistanceMm: Math.max(Math.abs(pivotOffset), Math.abs(tumorOffset)),
-        residualAngleDeg: 0,
-        reason: 'The projected target coincides with the needle pivot.'
-      };
+    if (depth < 10 || depth > 180) {
+      const distanceToRange = depth < 10 ? 10 - depth : depth - 180;
+      return fail(
+        Math.max(pivotResidual, distanceToRange),
+        0,
+        `The target requires ${depth.toFixed(1)} mm insertion depth; the available range is 10–180 mm.`
+      );
     }
 
-    const aim = FulcrumKinematics.solveAimTarget(alignedPivot, trocarNormal, alignedTumor);
+    const aim = FulcrumKinematics.solveAimTarget(needlePivot, trocarNormal, targetPoint);
+    if (Math.abs(aim.pitch) > 80 || Math.abs(aim.yaw) > 80) {
+      return fail(
+        pivotResidual,
+        0,
+        `The target requires pitch ${aim.pitch.toFixed(1)}° and yaw ${aim.yaw.toFixed(1)}°; each control range is ±80°.`
+      );
+    }
+
     const forward = FulcrumKinematics.computeForward(
-      alignedPivot,
+      needlePivot,
       trocarNormal,
       aim.pitch,
       aim.yaw,
@@ -144,14 +201,31 @@ export class WedgeOptimizer {
       depth
     );
     const targetDir = targetVector.normalize();
-    const pivotResidual = Math.abs(new THREE.Vector3().subVectors(alignedPivot, planeOrigin).dot(n));
-    const tipResidual = Math.abs(new THREE.Vector3().subVectors(forward.tip, planeOrigin).dot(n));
-    const residualDistanceMm = Math.max(pivotResidual, tipResidual);
+    const tipOffset = new THREE.Vector3().subVectors(forward.tip, planeOrigin);
+    const tipPlaneResidual = Math.abs(tipOffset.dot(n));
+    const targetResidual = forward.tip.distanceTo(targetPoint);
+    const lesionResidual = Math.max(0, forward.tip.distanceTo(tumorCenter) - tumorRadiusMm);
+    const tipLateral = tipOffset.dot(xAxis);
+    const tipDepth = tipOffset.dot(yAxis);
+    const sectorResidual = isPointInUltrasoundSector(tipLateral, tipDepth, sectorBounds)
+      ? 0
+      : closestPointInUltrasoundSector(tipLateral, tipDepth, sectorBounds).distanceMm;
+    const residualDistanceMm = Math.max(
+      pivotResidual,
+      tipPlaneResidual,
+      targetResidual,
+      lesionResidual,
+      sectorResidual
+    );
     const residualAngleDeg = THREE.MathUtils.radToDeg(
       Math.asin(THREE.MathUtils.clamp(Math.abs(forward.direction.dot(n)), 0, 1))
     );
     const feasible =
-      residualDistanceMm <= WedgeOptimizer.PLANE_DISTANCE_TOLERANCE_MM &&
+      pivotResidual <= WedgeOptimizer.PLANE_DISTANCE_TOLERANCE_MM &&
+      tipPlaneResidual <= WedgeOptimizer.PLANE_DISTANCE_TOLERANCE_MM &&
+      targetResidual <= 1e-6 &&
+      lesionResidual <= 1e-6 &&
+      sectorResidual <= 1e-6 &&
       residualAngleDeg <= WedgeOptimizer.PLANE_ANGLE_TOLERANCE_DEG;
 
     return {
@@ -159,11 +233,13 @@ export class WedgeOptimizer {
       pitch: aim.pitch,
       yaw: aim.yaw,
       depth,
-      ...(isPercutaneous ? { adjustedPivot: alignedPivot } : {}),
       targetDir,
+      targetPoint,
       residualDistanceMm,
       residualAngleDeg,
-      ...(feasible ? {} : { reason: 'The computed needle does not meet the in-plane tolerances.' })
+      ...(feasible
+        ? {}
+        : { reason: 'The computed needle misses the lesion, finite scan sector, or in-plane tolerance.' })
     };
   }
 }

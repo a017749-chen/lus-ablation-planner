@@ -3,6 +3,18 @@ import { TROCAR_PRESETS, TrocarDefinition } from '../config/presets';
 import { FulcrumKinematics, FulcrumState } from '../math/kinematics';
 import { AlignmentStatus } from '../math/alignmentEngine';
 import { AblationEllipsoid } from '../math/coverage';
+import { ULTRASOUND_SECTOR } from '../math/ultrasoundGeometry';
+
+export interface ProbeUSPlaneData {
+  origin: THREE.Vector3;
+  normal: THREE.Vector3;
+  xAxis: THREE.Vector3;
+  yAxis: THREE.Vector3;
+  nearRadiusMm: number;
+  farRadiusMm: number;
+  sectorAngleDeg: number;
+  sliceThicknessMm: number;
+}
 
 export interface InstrumentSystem {
   group: THREE.Group;
@@ -13,12 +25,7 @@ export interface InstrumentSystem {
   usGuideLine: THREE.Line;
   ablationSphere: THREE.Mesh;
   getAblationEllipsoid(): AblationEllipsoid;
-  getProbeUSPlaneData(): {
-    origin: THREE.Vector3;
-    normal: THREE.Vector3;
-    xAxis: THREE.Vector3;
-    yAxis: THREE.Vector3;
-  };
+  getProbeUSPlaneData(): ProbeUSPlaneData;
   getNeedleSegment(): { entry: THREE.Vector3; tip: THREE.Vector3 };
   updateProbe(trocarId: string, depth: number, tipPitch: number, tipYaw: number, roll: number): void;
   updateNeedle(
@@ -179,21 +186,18 @@ export class InstrumentBuilder {
     // 1.5mm Physical Thickness Ultrasound Scan Plane Mesh (Extruded Sector)
     // Curvilinear / Convex scan sector: 75° angle, 100mm depth, 1.5mm thickness
     const sectorShape = new THREE.Shape();
-    const sectorAngle = THREE.MathUtils.degToRad(75);
+    const sectorAngle = THREE.MathUtils.degToRad(ULTRASOUND_SECTOR.sectorAngleDeg);
     const halfAngle = sectorAngle * 0.5;
-    const scanDepth = 105; // 10.5 cm
-    const nearRadius = 10;
+    const scanDepth = ULTRASOUND_SECTOR.farRadiusMm;
+    const nearRadius = ULTRASOUND_SECTOR.nearRadiusMm;
 
     sectorShape.absarc(0, 0, nearRadius, Math.PI * 0.5 - halfAngle, Math.PI * 0.5 + halfAngle, false);
     sectorShape.absarc(0, 0, scanDepth, Math.PI * 0.5 + halfAngle, Math.PI * 0.5 - halfAngle, true);
     sectorShape.closePath();
 
     const extrudeSettings: THREE.ExtrudeGeometryOptions = {
-      depth: 1.5, // 1.5mm Physical Thickness
-      bevelEnabled: true,
-      bevelSegments: 1,
-      bevelSize: 0.2,
-      bevelThickness: 0.2
+      depth: ULTRASOUND_SECTOR.sliceThicknessMm,
+      bevelEnabled: false
     };
 
     const sliceGeom = new THREE.ExtrudeGeometry(sectorShape, extrudeSettings);
@@ -266,7 +270,16 @@ export class InstrumentBuilder {
       const xAxis = worldDirection(new THREE.Vector3(1, 0, 0));
       const yAxis = worldDirection(new THREE.Vector3(0, 0, 1));
 
-      return { origin, normal, xAxis, yAxis };
+      return {
+        origin,
+        normal,
+        xAxis,
+        yAxis,
+        nearRadiusMm: ULTRASOUND_SECTOR.nearRadiusMm,
+        farRadiusMm: ULTRASOUND_SECTOR.farRadiusMm,
+        sectorAngleDeg: ULTRASOUND_SECTOR.sectorAngleDeg,
+        sliceThicknessMm: ULTRASOUND_SECTOR.sliceThicknessMm
+      };
     };
 
     const updateProbeKinematics = (

@@ -1,5 +1,12 @@
 import * as THREE from 'three';
 
+export const PROBE_PORT_IDS = ['subcostal', 'subxiphoid', 'itt'] as const;
+export type ProbePortId = (typeof PROBE_PORT_IDS)[number];
+
+export function isProbePort(value: string): value is ProbePortId {
+  return (PROBE_PORT_IDS as readonly string[]).includes(value);
+}
+
 export interface LesionPreset {
   id: string;
   name: string;
@@ -8,7 +15,7 @@ export interface LesionPreset {
   tumorPosition: THREE.Vector3;
   tumorDiameter: number; // mm
   safetyMargin: number; // mm
-  suggestedProbePort: 'subcostal' | 'subxiphoid' | 'umbilical' | 'itt';
+  suggestedProbePort: ProbePortId;
   suggestedNeedlePort: 'subcostal' | 'subxiphoid' | 'itt' | 'percutaneous';
   requiresITT: boolean;
   probeInitialConfig: {
@@ -157,14 +164,36 @@ export const LESION_PRESETS: Record<string, LesionPreset> = {
 };
 
 /** Resolve the separate probe and needle ports selected by a lesion preset. */
-export function getSuggestedPortSelection(preset: LesionPreset): {
-  probePort: LesionPreset['suggestedProbePort'];
+export interface PortSelectionState {
+  probePort: ProbePortId;
   needlePort: LesionPreset['suggestedNeedlePort'];
   needleMode: 'trocar' | 'percutaneous';
-} {
+}
+
+export function getSuggestedPortSelection(preset: LesionPreset): PortSelectionState {
   return {
     probePort: preset.suggestedProbePort,
     needlePort: preset.suggestedNeedlePort,
     needleMode: preset.suggestedNeedlePort === 'percutaneous' ? 'percutaneous' : 'trocar'
+  };
+}
+
+/** Change the probe port while preserving the independently selected needle entry. */
+export function selectProbePort(
+  selection: PortSelectionState,
+  probePort: ProbePortId
+): PortSelectionState {
+  return { ...selection, probePort };
+}
+
+/** Change the needle entry while preserving the independently selected probe port. */
+export function selectNeedleEntry(
+  selection: PortSelectionState,
+  needlePort: PortSelectionState['needlePort']
+): PortSelectionState {
+  return {
+    ...selection,
+    needlePort,
+    needleMode: needlePort === 'percutaneous' ? 'percutaneous' : 'trocar'
   };
 }

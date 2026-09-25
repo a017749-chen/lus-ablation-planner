@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { AlignmentResult } from '../math/alignmentEngine';
+import { closestPointInUltrasoundSector, getSphereSlabIntersection } from '../math/ultrasoundGeometry';
+import { ProbeUSPlaneData } from '../scene/Instruments';
 
 export interface UltrasoundSimParams {
   canvas: HTMLCanvasElement;
@@ -62,7 +64,7 @@ export class UltrasoundSim {
     tumorPos: THREE.Vector3,
     tumorDia: number,
     safetyMargin: number,
-    probePlane: { origin: THREE.Vector3; normal: THREE.Vector3; xAxis: THREE.Vector3; yAxis: THREE.Vector3 },
+    probePlane: ProbeUSPlaneData,
     needleEntry: THREE.Vector3,
     needleTip: THREE.Vector3
   ) {
@@ -78,9 +80,10 @@ export class UltrasoundSim {
     // Convex sector geometry in 2D canvas coordinates
     const apexX = w * 0.5;
     const apexY = 12;
-    const startRadius = 22;
     const maxRadius = h - 18;
-    const sectorAngle = THREE.MathUtils.degToRad(75);
+    const scale = maxRadius / probePlane.farRadiusMm;
+    const startRadius = probePlane.nearRadiusMm * scale;
+    const sectorAngle = THREE.MathUtils.degToRad(probePlane.sectorAngleDeg);
     const halfAngle = sectorAngle * 0.5;
     const startAngle = Math.PI * 0.5 - halfAngle;
     const endAngle = Math.PI * 0.5 + halfAngle;
@@ -106,45 +109,62 @@ export class UltrasoundSim {
     ctx.drawImage(this.speckleCanvas, 0, 0, w, h);
     ctx.globalAlpha = 1.0;
 
-    // 3. Project Tumor onto 2D Ultrasound Sector
-    // Vector from probe origin to tumor
+    // 3. Draw only the actual sphere intersection with the 1.5mm scan slab.
     const relTumor = new THREE.Vector3().subVectors(tumorPos, probePlane.origin);
-    const normalOffset = relTumor.dot(probePlane.normal); // Out-of-plane distance
-    const tumorDistToPlane = Math.abs(normalOffset);
+    const normalOffset = relTumor.dot(probePlane.normal);
+    const lateralOffset = relTumor.dot(probePlane.xAxis);
+    const depthOffset = relTumor.dot(probePlane.yAxis);
+    const tumorRadiusMm = tumorDia * 0.5;
+    const tumorSlice = getSphereSlabIntersection(
+      tumorRadiusMm,
+      normalOffset,
+      probePlane.sliceThicknessMm
+    );
+    const tumorFanDistance = closestPointInUltrasoundSector(
+      lateralOffset,
+      depthOffset,
+      probePlane
+    ).distanceMm;
 
-    const lateralOffset = relTumor.dot(probePlane.xAxis); // Lateral mm
-    const depthOffset = relTumor.dot(probePlane.yAxis);   // Axial depth mm
+    const marginSlice = getSphereSlabIntersection(
+      tumorRadiusMm + safetyMargin,
+      normalOffset,
+      probePlane.sliceThicknessMm
+    );
+    const marginFanDistance = closestPointInUltrasoundSector(
+      lateralOffset,
+      depthOffset,
+      probePlane
+    ).distanceMm;
+    const tumorCanvasX = apexX + lateralOffset * scale;
+    const tumorCanvasY = apexY + depthOffset * scale;
 
-    // If tumor is within the acoustic beam slice (~15mm visibility elevation window)
-    if (tumorDistToPlane < 15.0 && depthOffset > 0 && depthOffset < 110) {
-      // Map depth mm to canvas pixels (100mm = maxRadius - startRadius)
-      const scale = (maxRadius - startRadius) / 100.0;
-      const tumorCanvasY = apexY + startRadius + depthOffset * scale;
-      const tumorCanvasX = apexX + lateralOffset * scale;
-      const tumorPixelRadius = (tumorDia * 0.5) * scale;
-      const marginPixelRadius = (tumorDia * 0.5 + safetyMargin) * scale;
-
-      // Blur factor if slightly out of slice plane
-      const sliceBlur = Math.min(1.0, tumorDistToPlane / 12.0);
-      const tumorOpacity = (1.0 - sliceBlur * 0.7);
-
-      // 3a. Safety Margin ring (dotted)
+    if (marginSlice.visible && marginFanDistance <= marginSlice.crossSectionRadiusMm) {
+      const marginPixelRadius = marginSlice.crossSectionRadiusMm * scale;
       ctx.beginPath();
       ctx.arc(tumorCanvasX, tumorCanvasY, marginPixelRadius, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(255, 184, 0, ${0.7 * tumorOpacity})`;
+      ctx.strokeStyle = 'rgba(255, 184, 0, 0.7)';
       ctx.lineWidth = 1.2;
       ctx.setLineDash([3, 3]);
       ctx.stroke();
       ctx.setLineDash([]);
+    }
 
-      // 3b. Tumor Hypoechoic Body (darker lesion core)
+    if (tumorSlice.visible && tumorFanDistance <= tumorSlice.crossSectionRadiusMm) {
+      const tumorPixelRadius = tumorSlice.crossSectionRadiusMm * scale;
+      const tumorOpacity = Math.max(
+        0.4,
+        1.0 - tumorSlice.effectiveOffsetMm / Math.max(1, tumorRadiusMm) * 0.5
+      );
+
+      // Hypoechoic lesion body uses the sphere/slab cross-section radius.
       const tumorGrad = ctx.createRadialGradient(
         tumorCanvasX, tumorCanvasY, 0,
         tumorCanvasX, tumorCanvasY, tumorPixelRadius
       );
       tumorGrad.addColorStop(0.0, `rgba(12, 16, 15, ${0.9 * tumorOpacity})`);
       tumorGrad.addColorStop(0.85, `rgba(18, 24, 22, ${0.85 * tumorOpacity})`);
-      tumorGrad.addColorStop(1.0, `rgba(160, 185, 175, ${0.95 * tumorOpacity})`); // Hyperechoic capsule rim
+      tumorGrad.addColorStop(1.0, `rgba(160, 185, 175, ${0.95 * tumorOpacity})`);
 
       ctx.beginPath();
       ctx.arc(tumorCanvasX, tumorCanvasY, tumorPixelRadius, 0, Math.PI * 2);
@@ -154,14 +174,14 @@ export class UltrasoundSim {
       ctx.lineWidth = 1.8;
       ctx.stroke();
 
-      // Posterior acoustic enhancement behind fluid/cellular tumor
+      // Posterior enhancement is clipped to the ultrasound sector above.
       ctx.beginPath();
       ctx.moveTo(tumorCanvasX - tumorPixelRadius * 0.7, tumorCanvasY + tumorPixelRadius);
       ctx.lineTo(tumorCanvasX + tumorPixelRadius * 0.7, tumorCanvasY + tumorPixelRadius);
-      ctx.lineTo(tumorCanvasX + tumorPixelRadius * 1.1, maxRadius);
-      ctx.lineTo(tumorCanvasX - tumorPixelRadius * 1.1, maxRadius);
+      ctx.lineTo(tumorCanvasX + tumorPixelRadius * 1.1, apexY + maxRadius);
+      ctx.lineTo(tumorCanvasX - tumorPixelRadius * 1.1, apexY + maxRadius);
       ctx.closePath();
-      const enhanceGrad = ctx.createLinearGradient(tumorCanvasX, tumorCanvasY, tumorCanvasX, maxRadius);
+      const enhanceGrad = ctx.createLinearGradient(tumorCanvasX, tumorCanvasY, tumorCanvasX, apexY + maxRadius);
       enhanceGrad.addColorStop(0.0, `rgba(255, 255, 255, ${0.15 * tumorOpacity})`);
       enhanceGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
       ctx.fillStyle = enhanceGrad;
@@ -169,7 +189,6 @@ export class UltrasoundSim {
     }
 
     // 4. Render Needle Reflection according to In-Plane Alignment Status
-    const scale = (maxRadius - startRadius) / 100.0;
 
     if (alignment.status === 'IN_PLANE') {
       // FULL IN-PLANE HYPERECHOIC NEEDLE TRACT
@@ -177,9 +196,9 @@ export class UltrasoundSim {
       const relTip = new THREE.Vector3().subVectors(needleTip, probePlane.origin);
 
       const entryX = apexX + relEntry.dot(probePlane.xAxis) * scale;
-      const entryY = apexY + startRadius + relEntry.dot(probePlane.yAxis) * scale;
+      const entryY = apexY + relEntry.dot(probePlane.yAxis) * scale;
       const tipX = apexX + relTip.dot(probePlane.xAxis) * scale;
-      const tipY = apexY + startRadius + relTip.dot(probePlane.yAxis) * scale;
+      const tipY = apexY + relTip.dot(probePlane.yAxis) * scale;
 
       // Glowing needle tract
       ctx.beginPath();
@@ -226,16 +245,16 @@ export class UltrasoundSim {
       // CROSS-PLANE INTERSECTION: SINGLE BRIGHT HYPERECHOIC DOT + ACOUSTIC SHADOW
       const relIntersect = new THREE.Vector3().subVectors(alignment.intersectionWithPlane, probePlane.origin);
       const dotX = apexX + relIntersect.dot(probePlane.xAxis) * scale;
-      const dotY = apexY + startRadius + relIntersect.dot(probePlane.yAxis) * scale;
+      const dotY = apexY + relIntersect.dot(probePlane.yAxis) * scale;
 
       // Posterior acoustic shadow extending down to sector base
       ctx.beginPath();
       ctx.moveTo(dotX - 2.5, dotY);
       ctx.lineTo(dotX + 2.5, dotY);
-      ctx.lineTo(dotX + 5, maxRadius);
-      ctx.lineTo(dotX - 5, maxRadius);
+      ctx.lineTo(dotX + 5, apexY + maxRadius);
+      ctx.lineTo(dotX - 5, apexY + maxRadius);
       ctx.closePath();
-      const shadowGrad = ctx.createLinearGradient(dotX, dotY, dotX, maxRadius);
+      const shadowGrad = ctx.createLinearGradient(dotX, dotY, dotX, apexY + maxRadius);
       shadowGrad.addColorStop(0.0, 'rgba(0, 0, 0, 0.85)');
       shadowGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0.4)');
       ctx.fillStyle = shadowGrad;
@@ -258,7 +277,7 @@ export class UltrasoundSim {
     ctx.beginPath();
     ctx.setLineDash([4, 4]);
     ctx.moveTo(apexX, apexY + startRadius);
-    ctx.lineTo(apexX, maxRadius);
+    ctx.lineTo(apexX, apexY + maxRadius);
     ctx.strokeStyle = alignment.status === 'IN_PLANE' ? 'rgba(0, 255, 102, 0.5)' : 'rgba(0, 210, 255, 0.35)';
     ctx.lineWidth = 1.0;
     ctx.stroke();
@@ -280,7 +299,7 @@ export class UltrasoundSim {
     ctx.fillStyle = 'rgba(150, 180, 200, 0.75)';
     ctx.font = '8px "JetBrains Mono", monospace';
     for (let cm = 2; cm <= 10; cm += 2) {
-      const tickDepth = apexY + startRadius + (cm * 10) * scale;
+      const tickDepth = apexY + (cm * 10) * scale;
       ctx.fillRect(w - 14, tickDepth, 8, 1);
       ctx.fillText(`${cm}`, w - 24, tickDepth + 3);
     }

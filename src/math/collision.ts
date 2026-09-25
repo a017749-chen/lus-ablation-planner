@@ -10,8 +10,8 @@ export interface VesselSegment {
 }
 
 export interface CollisionCheckResult {
-  hasCollision: boolean; // distance < 5mm
-  minDistance: number;   // mm (surface to surface)
+  hasCollision: boolean; // needle shaft-to-vessel surface clearance < 5mm
+  minDistance: number;   // mm (needle shaft surface to vessel surface)
   closestVesselName: string;
   ivcMinDist: number;
   pvMinDist: number;
@@ -20,7 +20,8 @@ export interface CollisionCheckResult {
 }
 
 export class CollisionDetector {
-  public static readonly WARNING_THRESHOLD_MM = 5.0; // 5 mm safety margin to major vessels
+  public static readonly WARNING_THRESHOLD_MM = 5.0; // geometric warning threshold
+  public static readonly NEEDLE_RADIUS_MM = 0.8; // 1.6mm diameter simulated shaft
 
   /**
    * Defines standard hepatic vascular anatomy segments
@@ -76,12 +77,13 @@ export class CollisionDetector {
   }
 
   /**
-   * Calculates minimum distance between needle segment and vascular tree
+   * Calculates needle-shaft surface clearance from the simulated vascular segments.
    */
   public static checkCollision(
     needleStart: THREE.Vector3,
     needleEnd: THREE.Vector3,
-    vessels: VesselSegment[] = CollisionDetector.getVascularTree()
+    vessels: VesselSegment[] = CollisionDetector.getVascularTree(),
+    needleRadiusMm: number = CollisionDetector.NEEDLE_RADIUS_MM
   ): CollisionCheckResult {
     let overallMinDist = Infinity;
     let closestVesselName = 'None';
@@ -98,8 +100,8 @@ export class CollisionDetector {
         vessel.end
       );
 
-      // Surface to surface distance
-      const surfaceDist = Math.max(0, distCenter - vessel.radius);
+      // Distance between the vessel surface and the outer shaft surface.
+      const surfaceDist = Math.max(0, distCenter - vessel.radius - needleRadiusMm);
 
       if (vessel.type === 'ivc') {
         ivcMinDist = Math.min(ivcMinDist, surfaceDist);

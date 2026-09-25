@@ -1,6 +1,15 @@
 import * as THREE from 'three';
 import './style.css';
-import { getSuggestedPortSelection, LESION_PRESETS, LesionPreset, TROCAR_PRESETS } from './config/presets';
+import {
+  getSuggestedPortSelection,
+  isProbePort,
+  LESION_PRESETS,
+  LesionPreset,
+  PortSelectionState,
+  selectNeedleEntry,
+  selectProbePort,
+  TROCAR_PRESETS
+} from './config/presets';
 import { AnatomyBuilder, AnatomyMeshes } from './scene/AnatomyBuilder';
 import { InstrumentBuilder, InstrumentSystem } from './scene/Instruments';
 import { MultiViewport, ViewportManager } from './views/MultiViewport';
@@ -9,6 +18,7 @@ import { AlignmentEngine, AlignmentResult } from './math/alignmentEngine';
 import { CollisionDetector, CollisionCheckResult } from './math/collision';
 import { WedgeOptimizer } from './math/wedgeOptimizer';
 import { estimateEllipsoidTargetOverlap } from './math/coverage';
+import { isPointInUltrasoundSector } from './math/ultrasoundGeometry';
 
 class SurgicalPlannerApp {
   private scene: THREE.Scene;
@@ -19,10 +29,22 @@ class SurgicalPlannerApp {
 
   // Active surgical state
   private activePreset: LesionPreset = LESION_PRESETS['S5_S6'];
-  private activeTrocarId: string = 'subcostal';
-  private needleTrocarId: string = 'subcostal';
-  private needleMode: 'trocar' | 'percutaneous' = 'trocar';
+  private portSelection: PortSelectionState = getSuggestedPortSelection(LESION_PRESETS['S5_S6']);
   private percutaneousPivot: THREE.Vector3 = new THREE.Vector3(65, 0, 70);
+
+  private get activeTrocarId() {
+    return this.portSelection.probePort;
+  }
+
+  private get needleTrocarId() {
+    return this.portSelection.needlePort === 'percutaneous'
+      ? this.portSelection.probePort
+      : this.portSelection.needlePort;
+  }
+
+  private get needleMode() {
+    return this.portSelection.needleMode;
+  }
 
   // Probe Kinematics
   private probeDepth: number = 120;
@@ -109,12 +131,7 @@ class SurgicalPlannerApp {
     const preset = LESION_PRESETS[presetKey];
     if (!preset) return;
     this.activePreset = preset;
-    const suggestedPorts = getSuggestedPortSelection(preset);
-    this.activeTrocarId = suggestedPorts.probePort;
-    this.needleMode = suggestedPorts.needleMode;
-    this.needleTrocarId = suggestedPorts.needlePort === 'percutaneous'
-      ? suggestedPorts.probePort
-      : suggestedPorts.needlePort;
+    this.portSelection = getSuggestedPortSelection(preset);
     this.syncTrocarSelectionUI();
 
     // Update preset UI highlight
@@ -162,41 +179,18 @@ class SurgicalPlannerApp {
     TROCAR_PRESETS['itt'].isActive = ittInUse;
     this.instruments.setTrocarActive('itt', ittInUse);
 
-    for (const id of ['umbilical', 'subxiphoid', 'subcostal', 'itt'] as const) {
-      const button = document.getElementById(`btn-trocar-${id}`);
-      if (!button) continue;
-      const selected =
-        this.activeTrocarId === id ||
-        (this.needleMode === 'trocar' && this.needleTrocarId === id);
-      button.className = id === 'itt'
-        ? selected
-          ? 'p-1.5 rounded border border-amber-500 bg-amber-950/40 text-left shadow-sm'
-          : 'p-1.5 rounded border border-amber-800/60 bg-slate-900 text-left opacity-60 hover:opacity-100 transition-opacity'
-        : selected
-          ? 'p-1.5 rounded border border-cyan-500 bg-cyan-950/40 text-left shadow-sm'
-          : 'p-1.5 rounded border border-slate-700 bg-slate-800/80 text-left hover:border-cyan-500 transition-colors';
-    }
-
-    const trocarModeButton = document.getElementById('needle-mode-trocar');
-    const percutaneousModeButton = document.getElementById('needle-mode-percutaneous');
-    if (trocarModeButton) {
-      trocarModeButton.className = this.needleMode === 'trocar'
-        ? 'px-2 py-0.5 rounded bg-cyan-700 text-white font-bold'
-        : 'px-2 py-0.5 rounded text-slate-400 hover:text-white';
-    }
-    if (percutaneousModeButton) {
-      percutaneousModeButton.className = this.needleMode === 'percutaneous'
-        ? 'px-2 py-0.5 rounded bg-cyan-700 text-white font-bold'
-        : 'px-2 py-0.5 rounded text-slate-400 hover:text-white';
-    }
+    const probePortSelect = document.getElementById('probe-port-select') as HTMLSelectElement | null;
+    const needleEntrySelect = document.getElementById('needle-entry-select') as HTMLSelectElement | null;
+    if (probePortSelect) probePortSelect.value = this.portSelection.probePort;
+    if (needleEntrySelect) needleEntrySelect.value = this.portSelection.needlePort;
 
     const portSummary = document.getElementById('port-selection-summary');
     if (portSummary) {
       const probeName = TROCAR_PRESETS[this.activeTrocarId]?.name ?? this.activeTrocarId;
       const needleName = this.needleMode === 'percutaneous'
-        ? '經皮穿刺'
+        ? '經皮固定示意入口'
         : TROCAR_PRESETS[this.needleTrocarId]?.name ?? this.needleTrocarId;
-      portSummary.textContent = `探頭：${probeName}｜穿刺針：${needleName}`;
+      portSummary.textContent = `超音波探頭：${probeName}｜穿刺入口：${needleName}`;
     }
 
     const ittPill = document.getElementById('itt-status-pill');
@@ -245,6 +239,7 @@ class SurgicalPlannerApp {
     const trocarDef = TROCAR_PRESETS[this.needleTrocarId] || TROCAR_PRESETS['subcostal'];
     const pivot = this.needleMode === 'trocar' ? trocarDef.pivotPosition : this.percutaneousPivot;
     const normal = this.needleMode === 'trocar' ? trocarDef.defaultDirection : new THREE.Vector3(0, 0, -1);
+    const tumorRadiusMm = this.tumorDiameter * 0.5;
 
     const solution = WedgeOptimizer.autoAlignNeedle(
       pivot,
@@ -254,7 +249,9 @@ class SurgicalPlannerApp {
       probePlane.xAxis,
       probePlane.yAxis,
       this.activePreset.tumorPosition,
-      this.needleMode === 'percutaneous'
+      tumorRadiusMm,
+      this.needleMode === 'percutaneous',
+      probePlane
     );
 
     const status = document.getElementById('auto-align-status');
@@ -265,33 +262,50 @@ class SurgicalPlannerApp {
       solution.depth === undefined
     ) {
       if (status) {
-        status.innerHTML = `固定套管距切面 ${solution.residualDistanceMm.toFixed(1)} mm。<button id="btn-quick-switch-perc" class="underline text-cyan-300 font-bold ml-1 hover:text-white cursor-pointer">[切換經皮穿刺並回正]</button>`;
+        status.textContent =
+          `無可行解：${solution.reason ?? '幾何條件不成立'}（距離殘差 ${solution.residualDistanceMm.toFixed(1)} mm；角度殘差 ${solution.residualAngleDeg.toFixed(1)}°）。`;
         status.className = 'text-[9px] text-amber-300 text-center mt-1';
-        document.getElementById('btn-quick-switch-perc')?.addEventListener('click', () => {
-          this.needleMode = 'percutaneous';
-          this.syncTrocarSelectionUI();
-          this.autoAlignToUSPlane();
-        });
+        status.dataset.autoAlignResult = 'failed';
       }
       return;
     }
 
-    this.needlePitch = Number(solution.pitch.toFixed(1));
-    this.needleYaw = Number(solution.yaw.toFixed(1));
-    this.needleDepth = Number(solution.depth.toFixed(1));
-
-    if (solution.adjustedPivot && this.needleMode === 'percutaneous') {
-      this.percutaneousPivot.copy(solution.adjustedPivot);
-    }
+    this.needlePitch = solution.pitch;
+    this.needleYaw = solution.yaw;
+    this.needleDepth = solution.depth;
 
     this.syncSlidersToState();
     this.updateKinematicsAndMath();
+
+    const needleSegment = this.instruments.getNeedleSegment();
+    const tipOffset = new THREE.Vector3().subVectors(needleSegment.tip, probePlane.origin);
+    const tipInFan = isPointInUltrasoundSector(
+      tipOffset.dot(probePlane.xAxis),
+      tipOffset.dot(probePlane.yAxis),
+      probePlane
+    );
+    const targetErrorMm = needleSegment.tip.distanceTo(this.activePreset.tumorPosition);
+    const appliedSolutionValid =
+      this.latestAlignment.status === 'IN_PLANE' &&
+      this.latestAlignment.maxDistance <= WedgeOptimizer.PLANE_DISTANCE_TOLERANCE_MM &&
+      targetErrorMm <= tumorRadiusMm + 1e-6 &&
+      tipInFan;
+
     if (status) {
-      status.textContent = `已套用幾何解：切面偏差 ${this.latestAlignment.maxDistance.toFixed(1)} mm，角差 ${this.latestAlignment.angleToPlaneDeg.toFixed(1)}°`;
+      if (!appliedSolutionValid) {
+        status.textContent =
+          `未通過套用後檢查：針尖距病灶 ${targetErrorMm.toFixed(1)} mm；請調整入口或掃描面後重試。`;
+        status.className = 'text-[9px] text-amber-300 text-center mt-1';
+        status.dataset.autoAlignResult = 'failed';
+        return;
+      }
+
+      status.textContent =
+        `幾何示意回正已套用：針尖位於病灶內、切面偏差 ${this.latestAlignment.maxDistance.toFixed(1)} mm，角差 ${this.latestAlignment.angleToPlaneDeg.toFixed(1)}°。`;
       status.className = 'text-[9px] text-emerald-300 text-center mt-1';
+      status.dataset.autoAlignResult = 'success';
     }
 
-    // Trigger visual celebration ripple
     const btn = document.getElementById('btn-auto-align');
     if (btn) {
       btn.classList.add('scale-105', 'ring-4', 'ring-emerald-400');
@@ -305,6 +319,13 @@ class SurgicalPlannerApp {
    * Main mathematical update cycle
    */
   private updateKinematicsAndMath() {
+    const autoAlignStatus = document.getElementById('auto-align-status');
+    if (autoAlignStatus?.dataset.autoAlignResult) {
+      autoAlignStatus.textContent = '配置已變更，請重新執行幾何示意回正。';
+      autoAlignStatus.className = 'text-[9px] text-slate-400 text-center mt-1';
+      delete autoAlignStatus.dataset.autoAlignResult;
+    }
+
     // 1. Update Tumor & Safety Margin geometry
     this.anatomy.updateTumor(this.activePreset.tumorPosition, this.tumorDiameter, this.safetyMargin);
 
@@ -463,7 +484,7 @@ class SurgicalPlannerApp {
     if (alertElem) {
       if (this.latestCollision.hasCollision) {
         alertElem.classList.remove('hidden');
-        alertElem.textContent = `ALERT: < 5mm to ${this.latestCollision.closestVesselName.split(' ')[0]}`;
+        alertElem.textContent = `針身表面間距 <5 mm：${this.latestCollision.closestVesselName.split(' ')[0]}`;
       } else {
         alertElem.classList.add('hidden');
       }
@@ -494,6 +515,7 @@ class SurgicalPlannerApp {
     document.getElementById('btn-cam-lateral')?.addEventListener('click', () => this.viewports.setCameraPreset('lateral'));
     document.getElementById('btn-cam-superior')?.addEventListener('click', () => this.viewports.setCameraPreset('superior'));
     document.getElementById('btn-cam-surgeon')?.addEventListener('click', () => this.viewports.setCameraPreset('surgeon'));
+    document.getElementById('btn-camera-umbilical')?.addEventListener('click', () => this.viewports.setCameraPreset('surgeon'));
     document.getElementById('btn-cam-reset')?.addEventListener('click', () => this.viewports.setCameraPreset('reset'));
 
     // Layer toggles
@@ -528,27 +550,21 @@ class SurgicalPlannerApp {
       this.updateKinematicsAndMath();
     });
 
-    // Trocar selection buttons
-    ['umbilical', 'subxiphoid', 'subcostal', 'itt'].forEach(id => {
-      document.getElementById(`btn-trocar-${id}`)?.addEventListener('click', () => {
-        if (id === 'itt') {
-          this.needleTrocarId = 'itt';
-          this.needleMode = 'trocar';
-        } else if (id === 'subcostal') {
-          this.activeTrocarId = 'subcostal';
-        } else if (id === 'subxiphoid') {
-          if (this.activeTrocarId === 'subcostal') {
-            this.needleTrocarId = 'subxiphoid';
-            this.needleMode = 'trocar';
-          } else {
-            this.activeTrocarId = 'subxiphoid';
-          }
-        } else if (id === 'umbilical') {
-          this.viewports.setCameraPreset('surgeon');
-        }
-        this.syncTrocarSelectionUI();
-        this.updateKinematicsAndMath();
-      });
+    const probePortSelect = document.getElementById('probe-port-select') as HTMLSelectElement | null;
+    probePortSelect?.addEventListener('change', (event) => {
+      const port = (event.target as HTMLSelectElement).value;
+      if (!isProbePort(port)) return;
+      this.portSelection = selectProbePort(this.portSelection, port);
+      this.syncTrocarSelectionUI();
+      this.updateKinematicsAndMath();
+    });
+
+    const needleEntrySelect = document.getElementById('needle-entry-select') as HTMLSelectElement | null;
+    needleEntrySelect?.addEventListener('change', (event) => {
+      const entry = (event.target as HTMLSelectElement).value as PortSelectionState['needlePort'];
+      this.portSelection = selectNeedleEntry(this.portSelection, entry);
+      this.syncTrocarSelectionUI();
+      this.updateKinematicsAndMath();
     });
 
     // LUS Probe Articulation Sliders
@@ -577,26 +593,6 @@ class SurgicalPlannerApp {
     inputProbeRoll?.addEventListener('input', (e) => {
       this.probeRoll = Number((e.target as HTMLInputElement).value);
       document.getElementById('val-probe-roll')!.textContent = `${this.probeRoll.toFixed(1)}°`;
-      this.updateKinematicsAndMath();
-    });
-
-    // Needle Mode buttons
-    const btnModeTrocar = document.getElementById('needle-mode-trocar');
-    const btnModePerc = document.getElementById('needle-mode-percutaneous');
-
-    btnModeTrocar?.addEventListener('click', () => {
-      this.needleMode = 'trocar';
-      this.syncTrocarSelectionUI();
-      btnModeTrocar.className = 'px-2 py-0.5 rounded bg-cyan-700 text-white font-bold';
-      if (btnModePerc) btnModePerc.className = 'px-2 py-0.5 rounded text-slate-400 hover:text-white';
-      this.updateKinematicsAndMath();
-    });
-
-    btnModePerc?.addEventListener('click', () => {
-      this.needleMode = 'percutaneous';
-      this.syncTrocarSelectionUI();
-      btnModePerc.className = 'px-2 py-0.5 rounded bg-cyan-700 text-white font-bold';
-      if (btnModeTrocar) btnModeTrocar.className = 'px-2 py-0.5 rounded text-slate-400 hover:text-white';
       this.updateKinematicsAndMath();
     });
 
