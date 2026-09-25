@@ -53,8 +53,11 @@ export class FulcrumKinematics {
     const qCombined = new THREE.Quaternion().multiplyQuaternions(qPitch, qYaw);
     const dir = normal.clone().applyQuaternion(qCombined).normalize();
 
+    const qBase = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
     const qRoll = new THREE.Quaternion().setFromAxisAngle(dir, rollRad);
-    const finalQuaternion = new THREE.Quaternion().multiplyQuaternions(qRoll, qCombined);
+    const finalQuaternion = new THREE.Quaternion()
+      .multiplyQuaternions(qRoll, qCombined)
+      .multiply(qBase);
 
     // Instrument tip is along direction into the peritoneal cavity
     const tip = pivot.clone().addScaledVector(dir, insertionDepth);
@@ -101,10 +104,9 @@ export class FulcrumKinematics {
     const localY = dir.dot(up);
     const localZ = dir.dot(normal);
 
-    // Yaw is horizontal angle around up vector
-    const yawRad = Math.atan2(localX, Math.max(0.001, localZ));
-    // Pitch is vertical elevation angle around right vector
-    const pitchRad = Math.asin(THREE.MathUtils.clamp(localY, -1, 1));
+    // These signs match computeForward(): positive pitch rotates the shaft toward -up.
+    const yawRad = Math.atan2(localX, localZ);
+    const pitchRad = Math.atan2(-localY, Math.hypot(localX, localZ));
 
     return {
       pitch: THREE.MathUtils.radToDeg(pitchRad),

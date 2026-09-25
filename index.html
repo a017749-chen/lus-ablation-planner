@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LUS-Ablation 3D Planner | 腹腔鏡超音波導引肝腫瘤穿刺消融手術規劃系統</title>
+  <title>LUS-Ablation 3D Planner | 示意性肝消融幾何模擬</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300ff66'><circle cx='12' cy='12' r='9'/></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,9 +23,9 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-sm font-bold tracking-wider text-cyan-400 font-mono">LUS-ABLATION 3D PLANNER</h1>
-          <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">CAS SUITE v2.4</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">SIMULATION PROTOTYPE</span>
         </div>
-        <p class="text-[10px] text-slate-400 font-mono">Laparoscopic Ultrasound-Guided Hepatic Radiofrequency Ablation System</p>
+        <p class="text-[10px] text-slate-400 font-mono">Illustrative LUS-Guided Ablation Geometry Simulator</p>
       </div>
     </div>
 
@@ -62,8 +62,8 @@
       <!-- Ablation Margin Coverage Metric -->
       <div class="flex items-center space-x-2 px-3 py-1.5 bg-[#0e1726] border border-[#1e2f47] rounded-md font-mono text-xs">
         <div class="flex flex-col text-right">
-          <span class="text-[9px] text-slate-400 uppercase">Margin Coverage (5mm)</span>
-          <span id="hud-coverage-percent" class="font-bold text-amber-400 text-xs">0% (PREVIEW OFF)</span>
+          <span class="text-[9px] text-slate-400 uppercase">Target + Margin Geometric Estimate</span>
+          <span id="hud-coverage-percent" class="font-bold text-amber-400 text-xs">— (SIMULATION OFF)</span>
         </div>
         <div class="w-8 h-8 rounded-full border border-slate-700 flex items-center justify-center bg-black/40">
           <svg class="w-6 h-6 transform -rotate-90">
@@ -294,6 +294,10 @@
             </button>
           </div>
 
+          <div id="port-selection-summary" class="text-[9px] text-cyan-200 bg-slate-950/60 p-2 rounded border border-slate-800">
+            探頭：右肋下套管｜穿刺針：右肋下套管
+          </div>
+
           <div class="text-[10px] text-slate-400 bg-slate-950/60 p-2 rounded border border-slate-800">
             <span class="text-cyan-400 font-bold">支點約束效應 (Fulcrum Kinematics)：</span>
             套管於腹壁為固定轉動原點，器械保留 4 自由度（Pitch, Yaw, Depth, Roll）。
@@ -395,7 +399,7 @@
               </svg>
               <span>一鍵自動回正 (Auto-Align to US Plane)</span>
             </button>
-            <p class="text-[9px] text-slate-400 text-center mt-1">直角楔形穿刺優化器：自動微調針體姿態，瞬間切入當前超音波切面軸線</p>
+            <p id="auto-align-status" class="text-[9px] text-slate-400 text-center mt-1">依固定支點檢查幾何可行性；無可行解時顯示殘餘偏差</p>
           </div>
         </div>
 
@@ -424,12 +428,12 @@
           <!-- Thermal Margin Assessment Box -->
           <div class="p-2.5 rounded bg-black/40 border border-slate-800 space-y-1 text-[10px]">
             <div class="flex justify-between">
-              <span class="text-slate-400">54°C 凝固壞死半徑:</span>
+              <span class="text-slate-400">模擬橢球短軸半徑:</span>
               <span id="ablation-rad-necrosis" class="text-rose-400 font-bold">17.5 mm</span>
             </div>
             <div class="flex justify-between">
-              <span class="text-slate-400">腫瘤邊界完全覆蓋率:</span>
-              <span id="ablation-coverage-stat" class="text-emerald-400 font-bold">100% (完全根治)</span>
+              <span class="text-slate-400">目標體積幾何重疊估計:</span>
+              <span id="ablation-coverage-stat" class="text-amber-400 font-bold">尚未估算</span>
             </div>
             <div class="flex justify-between">
               <span class="text-slate-400">最靠近血管最小間隔:</span>

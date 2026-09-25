@@ -155,3 +155,16 @@ export const LESION_PRESETS: Record<string, LesionPreset> = {
     }
   }
 };
+
+/** Resolve the separate probe and needle ports selected by a lesion preset. */
+export function getSuggestedPortSelection(preset: LesionPreset): {
+  probePort: LesionPreset['suggestedProbePort'];
+  needlePort: LesionPreset['suggestedNeedlePort'];
+  needleMode: 'trocar' | 'percutaneous';
+} {
+  return {
+    probePort: preset.suggestedProbePort,
+    needlePort: preset.suggestedNeedlePort,
+    needleMode: preset.suggestedNeedlePort === 'percutaneous' ? 'percutaneous' : 'trocar'
+  };
+}

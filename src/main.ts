@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import './style.css';
-import { LESION_PRESETS, LesionPreset, TROCAR_PRESETS } from './config/presets';
+import { getSuggestedPortSelection, LESION_PRESETS, LesionPreset, TROCAR_PRESETS } from './config/presets';
 import { AnatomyBuilder, AnatomyMeshes } from './scene/AnatomyBuilder';
 import { InstrumentBuilder, InstrumentSystem } from './scene/Instruments';
 import { MultiViewport, ViewportManager } from './views/MultiViewport';
@@ -8,6 +8,7 @@ import { UltrasoundSim } from './views/UltrasoundSim';
 import { AlignmentEngine, AlignmentResult } from './math/alignmentEngine';
 import { CollisionDetector, CollisionCheckResult } from './math/collision';
 import { WedgeOptimizer } from './math/wedgeOptimizer';
+import { estimateEllipsoidTargetOverlap } from './math/coverage';
 
 class SurgicalPlannerApp {
   private scene: THREE.Scene;
@@ -108,6 +109,13 @@ class SurgicalPlannerApp {
     const preset = LESION_PRESETS[presetKey];
     if (!preset) return;
     this.activePreset = preset;
+    const suggestedPorts = getSuggestedPortSelection(preset);
+    this.activeTrocarId = suggestedPorts.probePort;
+    this.needleMode = suggestedPorts.needleMode;
+    this.needleTrocarId = suggestedPorts.needlePort === 'percutaneous'
+      ? suggestedPorts.probePort
+      : suggestedPorts.needlePort;
+    this.syncTrocarSelectionUI();
 
     // Update preset UI highlight
     ['s2s3', 's5s6', 's7s8'].forEach(k => {
@@ -127,35 +135,6 @@ class SurgicalPlannerApp {
     const labelSeg = document.getElementById('label-active-segment');
     if (labelSeg) labelSeg.textContent = preset.segmentName;
 
-    // ITT Trocar handling for S7/S8 Diaphragm dome
-    const ittDef = TROCAR_PRESETS['itt'];
-    const ittBtn = document.getElementById('btn-trocar-itt');
-    const ittPill = document.getElementById('itt-status-pill');
-
-    if (preset.requiresITT) {
-      ittDef.isActive = true;
-      this.instruments.setTrocarActive('itt', true);
-      this.needleTrocarId = 'itt';
-      if (ittBtn) {
-        ittBtn.className = 'p-1.5 rounded border border-amber-500 bg-amber-950/40 text-left shadow-sm';
-      }
-      if (ittPill) {
-        ittPill.textContent = '已啟用';
-        ittPill.className = 'text-[8px] px-1 bg-amber-500 text-black font-bold rounded animate-pulse';
-      }
-    } else {
-      ittDef.isActive = false;
-      this.instruments.setTrocarActive('itt', false);
-      if (this.needleTrocarId === 'itt') this.needleTrocarId = 'subcostal';
-      if (ittBtn) {
-        ittBtn.className = 'p-1.5 rounded border border-amber-800/60 bg-slate-900 text-left opacity-60 hover:opacity-100 transition-opacity';
-      }
-      if (ittPill) {
-        ittPill.textContent = '待命';
-        ittPill.className = 'text-[8px] px-1 bg-amber-950 text-amber-300 rounded';
-      }
-    }
-
     // Update Probe and Needle parameters
     this.tumorDiameter = preset.tumorDiameter;
     this.safetyMargin = preset.safetyMargin;
@@ -172,6 +151,48 @@ class SurgicalPlannerApp {
     // Sync input sliders
     this.syncSlidersToState();
     this.updateKinematicsAndMath();
+  }
+
+
+  private syncTrocarSelectionUI() {
+    const ittInUse =
+      this.activeTrocarId === 'itt' ||
+      (this.needleMode === 'trocar' && this.needleTrocarId === 'itt') ||
+      this.activePreset.requiresITT;
+    TROCAR_PRESETS['itt'].isActive = ittInUse;
+    this.instruments.setTrocarActive('itt', ittInUse);
+
+    for (const id of ['umbilical', 'subxiphoid', 'subcostal', 'itt'] as const) {
+      const button = document.getElementById(`btn-trocar-${id}`);
+      if (!button) continue;
+      const selected =
+        this.activeTrocarId === id ||
+        (this.needleMode === 'trocar' && this.needleTrocarId === id);
+      button.className = id === 'itt'
+        ? selected
+          ? 'p-1.5 rounded border border-amber-500 bg-amber-950/40 text-left shadow-sm'
+          : 'p-1.5 rounded border border-amber-800/60 bg-slate-900 text-left opacity-60 hover:opacity-100 transition-opacity'
+        : selected
+          ? 'p-1.5 rounded border border-cyan-500 bg-cyan-950/40 text-left shadow-sm'
+          : 'p-1.5 rounded border border-slate-700 bg-slate-800/80 text-left hover:border-cyan-500 transition-colors';
+    }
+
+    const portSummary = document.getElementById('port-selection-summary');
+    if (portSummary) {
+      const probeName = TROCAR_PRESETS[this.activeTrocarId]?.name ?? this.activeTrocarId;
+      const needleName = this.needleMode === 'percutaneous'
+        ? '經皮穿刺'
+        : TROCAR_PRESETS[this.needleTrocarId]?.name ?? this.needleTrocarId;
+      portSummary.textContent = `探頭：${probeName}｜穿刺針：${needleName}`;
+    }
+
+    const ittPill = document.getElementById('itt-status-pill');
+    if (ittPill) {
+      ittPill.textContent = ittInUse ? '已啟用' : '待命';
+      ittPill.className = ittInUse
+        ? 'text-[8px] px-1 bg-amber-500 text-black font-bold rounded animate-pulse'
+        : 'text-[8px] px-1 bg-amber-950 text-amber-300 rounded';
+    }
   }
 
   private syncSlidersToState() {
@@ -223,6 +244,20 @@ class SurgicalPlannerApp {
       this.needleMode === 'percutaneous'
     );
 
+    const status = document.getElementById('auto-align-status');
+    if (
+      !solution.feasible ||
+      solution.pitch === undefined ||
+      solution.yaw === undefined ||
+      solution.depth === undefined
+    ) {
+      if (status) {
+        status.textContent = `無可行回正解：固定支點距掃描面 ${solution.residualDistanceMm.toFixed(1)} mm；${solution.reason ?? '請調整探頭或選擇經皮模式。'}`;
+        status.className = 'text-[9px] text-rose-300 text-center mt-1';
+      }
+      return;
+    }
+
     this.needlePitch = Number(solution.pitch.toFixed(1));
     this.needleYaw = Number(solution.yaw.toFixed(1));
     this.needleDepth = Number(solution.depth.toFixed(1));
@@ -233,6 +268,10 @@ class SurgicalPlannerApp {
 
     this.syncSlidersToState();
     this.updateKinematicsAndMath();
+    if (status) {
+      status.textContent = `已套用幾何解：切面偏差 ${this.latestAlignment.maxDistance.toFixed(1)} mm，角差 ${this.latestAlignment.angleToPlaneDeg.toFixed(1)}°`;
+      status.className = 'text-[9px] text-emerald-300 text-center mt-1';
+    }
 
     // Trigger visual celebration ripple
     const btn = document.getElementById('btn-auto-align');
@@ -295,38 +334,26 @@ class SurgicalPlannerApp {
 
     // 6. Update Thermal Ablation Zone & Coverage
     this.instruments.setAblationPreview(this.isAblationSimActive, this.ablationDiameter);
-    this.updateThermalCoverage(needleSegment.tip);
+    this.updateThermalCoverage();
 
     // 7. Update Surgical HUD Telemetry
     this.updateHUDTelemetry(needleSegment.tip);
   }
 
   /**
-   * Compute 3D volumetric thermal margin coverage
+   * Estimate the geometric overlap between the target-plus-margin sphere and
+   * the same world-space ellipsoid shown in the 3D scene.
    */
-  private updateThermalCoverage(needleTip: THREE.Vector3) {
-    const tumorCenter = this.activePreset.tumorPosition;
-    const tumorRadius = this.tumorDiameter * 0.5;
-    const totalTargetRadius = tumorRadius + this.safetyMargin;
-
-    // Ablation center is ~4mm behind needle tip
-    const ablationCenter = needleTip.clone().add(new THREE.Vector3(0, -4, 0));
-    const distCenterToCenter = ablationCenter.distanceTo(tumorCenter);
-    const ablationRadius = this.ablationDiameter * 0.5;
-
-    // Coverage calculation: check if target sphere is fully inside ablation sphere
-    let coveragePercent = 0;
-    if (this.isAblationSimActive) {
-      if (distCenterToCenter + totalTargetRadius <= ablationRadius) {
-        coveragePercent = 100;
-      } else if (distCenterToCenter >= ablationRadius + totalTargetRadius) {
-        coveragePercent = 0;
-      } else {
-        // Approximate geometric intersection ratio
-        const overlap = Math.max(0, ablationRadius - (distCenterToCenter - totalTargetRadius));
-        coveragePercent = Math.min(99, Math.max(10, Math.round((overlap / (totalTargetRadius * 2)) * 100)));
-      }
-    }
+  private updateThermalCoverage() {
+    const targetCenter = this.activePreset.tumorPosition;
+    const targetRadius = this.tumorDiameter * 0.5 + this.safetyMargin;
+    const coveragePercent = this.isAblationSimActive
+      ? estimateEllipsoidTargetOverlap(
+          targetCenter,
+          targetRadius,
+          this.instruments.getAblationEllipsoid()
+        )
+      : 0;
 
     // Telemetry updates
     const coverageText = document.getElementById('hud-coverage-percent');
@@ -339,22 +366,22 @@ class SurgicalPlannerApp {
     }
 
     if (!this.isAblationSimActive) {
-      if (coverageText) coverageText.textContent = '0% (PREVIEW OFF)';
+      if (coverageText) coverageText.textContent = '— (SIMULATION OFF)';
       if (coverageRing) coverageRing.setAttribute('stroke-dashoffset', '62.8');
       if (coverageStat) coverageStat.textContent = '未啟用';
     } else {
       if (coverageText) {
-        coverageText.textContent = `${coveragePercent}% ${coveragePercent === 100 ? '(COMPLETE)' : '(INCOMPLETE)'}`;
-        coverageText.className = `font-bold text-xs ${coveragePercent === 100 ? 'text-emerald-400' : 'text-amber-400'}`;
+        coverageText.textContent = `${coveragePercent}% (GEOMETRIC ESTIMATE)`;
+        coverageText.className = 'font-bold text-xs text-amber-400';
       }
       if (coverageRing) {
         const offset = 62.8 * (1 - coveragePercent / 100);
         coverageRing.setAttribute('stroke-dashoffset', String(offset));
-        coverageRing.setAttribute('class', coveragePercent === 100 ? 'text-emerald-400 transition-all duration-300' : 'text-amber-400 transition-all duration-300');
+        coverageRing.setAttribute('class', 'text-amber-400 transition-all duration-300');
       }
       if (coverageStat) {
-        coverageStat.textContent = coveragePercent === 100 ? '100% (完全根治覆蓋)' : `${coveragePercent}% (消融邊緣未包覆)`;
-        coverageStat.className = coveragePercent === 100 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold';
+        coverageStat.textContent = `${coveragePercent}% (目標體積幾何重疊估計)`;
+        coverageStat.className = 'text-amber-400 font-bold';
       }
     }
   }
@@ -488,6 +515,7 @@ class SurgicalPlannerApp {
       document.getElementById(`btn-trocar-${id}`)?.addEventListener('click', () => {
         this.activeTrocarId = id;
         this.needleTrocarId = id;
+        this.syncTrocarSelectionUI();
         this.updateKinematicsAndMath();
       });
     });
@@ -527,6 +555,7 @@ class SurgicalPlannerApp {
 
     btnModeTrocar?.addEventListener('click', () => {
       this.needleMode = 'trocar';
+      this.syncTrocarSelectionUI();
       btnModeTrocar.className = 'px-2 py-0.5 rounded bg-cyan-700 text-white font-bold';
       if (btnModePerc) btnModePerc.className = 'px-2 py-0.5 rounded text-slate-400 hover:text-white';
       this.updateKinematicsAndMath();
@@ -534,6 +563,7 @@ class SurgicalPlannerApp {
 
     btnModePerc?.addEventListener('click', () => {
       this.needleMode = 'percutaneous';
+      this.syncTrocarSelectionUI();
       btnModePerc.className = 'px-2 py-0.5 rounded bg-cyan-700 text-white font-bold';
       if (btnModeTrocar) btnModeTrocar.className = 'px-2 py-0.5 rounded text-slate-400 hover:text-white';
       this.updateKinematicsAndMath();

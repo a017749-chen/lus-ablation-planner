@@ -20,7 +20,7 @@ export interface AlignmentResult {
 }
 
 export class AlignmentEngine {
-  // Clinical thresholds
+  // Visualization thresholds; these values are not validated clinical criteria.
   public static readonly ANGLE_TOLERANCE_DEG = 2.0; // 2 degrees
   public static readonly DISTANCE_TOLERANCE_MM = 1.0; // 1.0 mm (inside 1.5mm slice thickness)
   public static readonly SIN_2_DEG = Math.sin(THREE.MathUtils.degToRad(2.0));

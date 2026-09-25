@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { TROCAR_PRESETS, TrocarDefinition } from '../config/presets';
 import { FulcrumKinematics, FulcrumState } from '../math/kinematics';
 import { AlignmentStatus } from '../math/alignmentEngine';
+import { AblationEllipsoid } from '../math/coverage';
 
 export interface InstrumentSystem {
   group: THREE.Group;
@@ -11,6 +12,7 @@ export interface InstrumentSystem {
   usSliceMesh: THREE.Mesh;
   usGuideLine: THREE.Line;
   ablationSphere: THREE.Mesh;
+  getAblationEllipsoid(): AblationEllipsoid;
   getProbeUSPlaneData(): {
     origin: THREE.Vector3;
     normal: THREE.Vector3;
@@ -53,7 +55,7 @@ export class InstrumentBuilder {
     group.add(probeGroup);
 
     // 3. Build Ablation Needle & Thermal Zone
-    const { needleGroup, ablationSphere, getNeedlePts, updateNeedleKinematics, setAlignmentColor } =
+    const { needleGroup, ablationSphere, getNeedlePts, getAblationEllipsoid, updateNeedleKinematics, setAlignmentColor } =
       InstrumentBuilder.createAblationNeedle();
     group.add(needleGroup);
 
@@ -65,6 +67,7 @@ export class InstrumentBuilder {
       usSliceMesh,
       usGuideLine,
       ablationSphere,
+      getAblationEllipsoid,
       getProbeUSPlaneData: getProbePlaneData,
       getNeedleSegment: getNeedlePts,
       updateProbe: updateProbeKinematics,
@@ -247,9 +250,17 @@ export class InstrumentBuilder {
       tipMesh.getWorldPosition(origin);
 
       // Normal is perpendicular to slice face (Z axis in local head space)
-      const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(headGroup.quaternion).normalize();
-      const yAxis = new THREE.Vector3(0, 1, 0).applyQuaternion(headGroup.quaternion).normalize(); // Beam depth
-      const xAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(headGroup.quaternion).normalize(); // Lateral sweep
+      const worldDirection = (localDirection: THREE.Vector3) => {
+        const start = usSliceMesh.localToWorld(new THREE.Vector3(0, 0, 0));
+        const end = usSliceMesh.localToWorld(localDirection.clone());
+        return end.sub(start).normalize();
+      };
+
+      // ExtrudeGeometry is rotated into the mesh's local X/Z plane; its normal
+      // is -Y and its scan-depth axis is +Z after the geometry transform.
+      const normal = worldDirection(new THREE.Vector3(0, -1, 0));
+      const xAxis = worldDirection(new THREE.Vector3(1, 0, 0));
+      const yAxis = worldDirection(new THREE.Vector3(0, 0, 1));
 
       return { origin, normal, xAxis, yAxis };
     };
@@ -274,6 +285,7 @@ export class InstrumentBuilder {
 
       probeGroup.position.copy(fulcrum.pivot);
       probeGroup.quaternion.copy(fulcrum.quaternion);
+      shaftMesh.scale.y = depth / 300;
 
       // Move articulating head to distal end of insertion
       headGroup.position.set(0, depth, 0);
@@ -360,6 +372,22 @@ export class InstrumentBuilder {
       tip: currentTip.clone()
     });
 
+    const getAblationEllipsoid = (): AblationEllipsoid => {
+      needleGroup.updateWorldMatrix(true, true);
+      const center = ablationSphere.getWorldPosition(new THREE.Vector3());
+      const orientation = ablationSphere.getWorldQuaternion(new THREE.Quaternion());
+      const scale = ablationSphere.scale.x;
+      return {
+        center,
+        axisX: new THREE.Vector3(1, 0, 0).applyQuaternion(orientation).normalize(),
+        axisY: new THREE.Vector3(0, 1, 0).applyQuaternion(orientation).normalize(),
+        axisZ: new THREE.Vector3(0, 0, 1).applyQuaternion(orientation).normalize(),
+        radiusX: 17.5 * scale,
+        radiusY: 17.5 * 1.15 * scale,
+        radiusZ: 17.5 * scale
+      };
+    };
+
     const updateNeedleKinematics = (
       mode: 'trocar' | 'percutaneous',
       trocarId: string,
@@ -393,10 +421,15 @@ export class InstrumentBuilder {
 
       needleGroup.position.copy(fulcrum.pivot);
       needleGroup.quaternion.copy(fulcrum.quaternion);
+      shaftMesh.scale.y = depth / 250;
+      for (const marking of markingsGroup.children) {
+        marking.visible = marking.position.y <= depth;
+      }
 
-      // Update tip mesh position along local Y axis
-      tipMesh.position.set(0, depth, 0);
-      ablationSphere.position.set(0, depth - 4, 0); // Necrosis centered slightly behind active tip
+      // The cone's apex is 4 mm past its local origin, so place that apex at
+      // the kinematic tip. The ellipsoid center shares the same needle axis.
+      tipMesh.position.set(0, depth - 4, 0);
+      ablationSphere.position.set(0, depth - 4, 0);
 
       currentEntry.copy(fulcrum.pivot);
       currentTip.copy(fulcrum.tip);
@@ -418,6 +451,6 @@ export class InstrumentBuilder {
       shaftMat.emissiveIntensity = status === 'IN_PLANE' ? 0.7 : 0.2;
     };
 
-    return { needleGroup, ablationSphere, getNeedlePts, updateNeedleKinematics, setAlignmentColor };
+    return { needleGroup, ablationSphere, getNeedlePts, getAblationEllipsoid, updateNeedleKinematics, setAlignmentColor };
   }
 }

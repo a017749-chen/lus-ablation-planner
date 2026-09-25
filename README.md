@@ -1,5 +1,5 @@
 # LUS-Ablation 3D Planner
-### 腹腔鏡超音波導引肝腫瘤穿刺消融手術規劃系統 (Laparoscopic Ultrasound-Guided Hepatic RFA/MWA Surgical CAS Suite)
+### 腹腔鏡超音波肝消融示意幾何模擬 (Illustrative Laparoscopic Ultrasound Ablation Geometry Simulation)
 
 [![Three.js](https://img.shields.io/badge/Three.js-0.172.0-00d2ff?logo=threedotjs&logoColor=white)](https://threejs.org/)
 [![Vite](https://img.shields.io/badge/Vite-6.0-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
@@ -7,13 +7,13 @@
 [![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-3.4-38B2AC?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![License](https://img.shields.io/badge/License-MIT-00ff66.svg)](LICENSE)
 
-**LUS-Ablation 3D Planner** 是一套專為微創肝膽胰外科（HPB MIS）、介入放射科與腫瘤消融醫師打造的高精度 WebGL 電腦輔助外科（Computer-Assisted Surgery, CAS）手術規劃與導航模擬系統。
+**LUS-Ablation 3D Planner** 是以 WebGL 呈現的示意性 3D 幾何與介面原型，用於展示肝臟病灶、器械姿態、超音波切面與消融區的空間關係。
 
-系統融合**腹壁套管 4-DOF 支點運動學約束（Trocar Fulcrum Kinematics）**、**超音波切面共平面偵測引擎（In-Plane Alignment Engine）**、**直角楔形穿刺路徑優化器（Right-Angle Wedge Optimizer）**與**即時二維 B-Mode 灰階超音波聲學物理模擬**，具備極致低延遲、手術室暗黑模式儀表（Medical Cyber Dark HUD）與多重視窗即時協同。
+目前的解剖、器械、血管、超音波與消融模型皆為示意性幾何，未經臨床驗證；不可用於手術導航、診斷或治療決策。消融「重疊估計」只計算目標加安全邊界球體與畫面橢球的幾何重疊，不代表溫度場、熱劑量或腫瘤控制率。
 
 ---
 
-## 🌟 系統亮點與臨床特點 (Clinical & Engineering Features)
+## 🌟 示意模擬功能 (Simulation Features)
 
 ### 1. 擬真 3D 解剖與關鍵組織柱 (Anatomical Modeling)
 - **腹壁充氣穹頂 (Abdominal Wall Dome)**：模擬 $14\text{ mmHg}$ 人工氣腹（Pneumoperitoneum）半透明穹頂，精確標定劍突（Xiphoid）、臍孔（Umbilicus）、雙側肋緣線（Costal Margins）與肋間隙。
@@ -44,7 +44,7 @@
 
 ### 4. 直角楔形穿刺優化器與一鍵回正 (Right-Angle Wedge Optimizer)
 - 根據探頭軸向與腫瘤中心，依據最佳縱向夾角（預設 $60^\circ$）與側向發散角（預設 $30^\circ$）推算最佳進針點。
-- **一鍵自動回正 (Auto-Align to US Plane)**：微調進針姿態，使針身精確貼合超音波扇面導引軸線。
+- **一鍵自動回正 (Auto-Align to US Plane)**：套管模式會先檢查固定支點是否位於掃描面；若不可行，回報支點距離與原因且不套用角度。
 
 ### 5. 血管碰撞避障 (Collision Detection)
 - 實時解析針軸線段與 IVC / 門靜脈圓柱體之最短距離。
@@ -107,7 +107,7 @@ npm install
 npm run dev
 
 # 4. 執行計算幾何與運動學單元測試
-npx tsx src/test/verify.ts
+npm test
 
 # 5. 生產環境構建
 npm run build
