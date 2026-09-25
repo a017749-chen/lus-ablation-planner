@@ -122,11 +122,11 @@ export class AnatomyBuilder {
     const liverGroup = new THREE.Group();
     liverGroup.name = 'LiverParenchyma';
 
-    // Procedural multi-segment liver shapes
-    // Right Lobe: S5/S6 (anterior/inferior), S7/S8 (posterior/superior dome)
+    // Procedural liver lobes are illustrative; patient-specific planning must use CT-derived masks.
+    // This nominal 70:30 right:left volume ratio avoids presenting the left lobe as a tiny sliver.
+    // Keep transforms separate so scaling and rotation do not distort lobe centers.
     const rightLobeGeom = new THREE.SphereGeometry(65, 32, 24);
     rightLobeGeom.scale(1.2, 1.1, 0.75);
-    rightLobeGeom.translate(35, 15, -10);
 
     const rightLobeMat = new THREE.MeshPhysicalMaterial({
       color: 0xa8422b, // Realistic liver reddish-brown
@@ -139,13 +139,12 @@ export class AnatomyBuilder {
       clearcoat: 0.3
     });
     const rightLobe = new THREE.Mesh(rightLobeGeom, rightLobeMat);
+    rightLobe.position.set(35, 15, -10);
     liverGroup.add(rightLobe);
 
     // Left Lobe: S2/S3 (lateral), S4 (medial)
-    const leftLobeGeom = new THREE.SphereGeometry(45, 28, 20);
+    const leftLobeGeom = new THREE.SphereGeometry(60, 28, 20);
     leftLobeGeom.scale(1.3, 0.85, 0.5);
-    leftLobeGeom.translate(-38, 10, 5);
-    leftLobeGeom.rotateZ(0.2);
 
     const leftLobeMat = new THREE.MeshPhysicalMaterial({
       color: 0x943622,
@@ -158,6 +157,9 @@ export class AnatomyBuilder {
       clearcoat: 0.25
     });
     const leftLobe = new THREE.Mesh(leftLobeGeom, leftLobeMat);
+    // Preserve the center produced by the original translated-then-rotated geometry.
+    leftLobe.position.set(-38 * Math.cos(0.2) - 10 * Math.sin(0.2), -38 * Math.sin(0.2) + 10 * Math.cos(0.2), 5);
+    leftLobe.rotation.z = 0.2;
     liverGroup.add(leftLobe);
 
     // Diaphragmatic Dome surface indicator (for S7/S8 high dome)
