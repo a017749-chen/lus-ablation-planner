@@ -81,7 +81,7 @@ export class AnatomyBuilder {
       const ribPts: THREE.Vector3[] = [];
       const yOffset = 25 + i * 18;
       for (let theta = 0.1; theta <= 1.4; theta += 0.08) {
-        const x = Math.cos(theta) * (110 - i * 4);
+        const x = -Math.cos(theta) * (110 - i * 4);
         const y = yOffset - theta * 12;
         const z = Math.sin(theta) * 60 + 5;
         ribPts.push(new THREE.Vector3(x, y, z));
@@ -116,15 +116,60 @@ export class AnatomyBuilder {
     xiphoidMesh.position.set(0, 90, 78);
     xiphoidMesh.rotateZ(Math.PI);
     landmarks.add(xiphoidMesh);
+
+    // Patient-side badges are anchored to anatomy and face each active camera.
+    const addPatientSideLabel = (side: 'R' | 'L', x: number) => {
+      const labelGroup = new THREE.Group();
+      labelGroup.name = side === 'R' ? 'PatientRightLabel' : 'PatientLeftLabel';
+      labelGroup.userData.isPatientSideBillboard = true;
+      labelGroup.position.set(x, 58, 28);
+
+      const color = side === 'R' ? 0x5ce1e6 : 0xffb800;
+      const badge = new THREE.Mesh(
+        new THREE.CircleGeometry(10, 24),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.24,
+          depthTest: false,
+          depthWrite: false
+        })
+      );
+      badge.renderOrder = 10;
+      labelGroup.add(badge);
+
+      const strokes: Array<[number, number]> = side === 'R'
+        ? [
+            [-4, -6], [-4, 6], [-4, 6], [2, 6], [2, 6], [5, 4],
+            [5, 4], [5, 2], [5, 2], [2, 0], [2, 0], [-4, 0],
+            [-4, 0], [5, -6]
+          ]
+        : [
+            [-4, 6], [-4, -6], [-4, -6], [5, -6]
+          ];
+      const points: THREE.Vector3[] = [];
+      for (const [xPoint, yPoint] of strokes) {
+        points.push(new THREE.Vector3(xPoint, yPoint, 0.25));
+      }
+      const glyph = new THREE.LineSegments(
+        new THREE.BufferGeometry().setFromPoints(points),
+        new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, depthWrite: false })
+      );
+      glyph.renderOrder = 11;
+      labelGroup.add(glyph);
+      landmarks.add(labelGroup);
+    };
+
+    addPatientSideLabel('R', -128);
+    addPatientSideLabel('L', 128);
     group.add(landmarks);
 
-    // 4. Liver Parenchyma (Anatomical Couinaud Segments)
+    // 4. Illustrative hepatic lobes; these are not Couinaud segment masks.
     const liverGroup = new THREE.Group();
     liverGroup.name = 'LiverParenchyma';
 
-    // Procedural liver lobes are illustrative; patient-specific planning must use CT-derived masks.
-    // This nominal 70:30 right:left volume ratio avoids presenting the left lobe as a tiny sliver.
-    // Keep transforms separate so scaling and rotation do not distort lobe centers.
+    // These overlapping ellipsoids suggest gross lobe shape only. Their separate mesh volumes
+    // do not represent a non-overlapping 70:30 partition or patient-specific liver anatomy.
     const rightLobeGeom = new THREE.SphereGeometry(65, 32, 24);
     rightLobeGeom.scale(1.2, 1.1, 0.75);
 
@@ -139,7 +184,8 @@ export class AnatomyBuilder {
       clearcoat: 0.3
     });
     const rightLobe = new THREE.Mesh(rightLobeGeom, rightLobeMat);
-    rightLobe.position.set(35, 15, -10);
+    rightLobe.name = 'IllustrativeRightLobe';
+    rightLobe.position.set(-35, 15, -10);
     liverGroup.add(rightLobe);
 
     // Left Lobe: S2/S3 (lateral), S4 (medial)
@@ -157,15 +203,16 @@ export class AnatomyBuilder {
       clearcoat: 0.25
     });
     const leftLobe = new THREE.Mesh(leftLobeGeom, leftLobeMat);
-    // Preserve the center produced by the original translated-then-rotated geometry.
-    leftLobe.position.set(-38 * Math.cos(0.2) - 10 * Math.sin(0.2), -38 * Math.sin(0.2) + 10 * Math.cos(0.2), 5);
-    leftLobe.rotation.z = 0.2;
+    // Mirror the left-lobe placement across the patient midline.
+    leftLobe.name = 'IllustrativeLeftLobe';
+    leftLobe.position.set(38 * Math.cos(0.2) + 10 * Math.sin(0.2), -38 * Math.sin(0.2) + 10 * Math.cos(0.2), 5);
+    leftLobe.rotation.z = -0.2;
     liverGroup.add(leftLobe);
 
     // Diaphragmatic Dome surface indicator (for S7/S8 high dome)
     const domeCoverGeom = new THREE.SphereGeometry(68, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.35);
     domeCoverGeom.scale(1.15, 0.9, 0.75);
-    domeCoverGeom.translate(35, 52, -18);
+    domeCoverGeom.translate(-35, 52, -18);
     const domeCoverMat = new THREE.MeshBasicMaterial({
       color: 0xffb800,
       wireframe: true,
