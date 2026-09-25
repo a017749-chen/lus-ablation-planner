@@ -177,6 +177,19 @@ class SurgicalPlannerApp {
           : 'p-1.5 rounded border border-slate-700 bg-slate-800/80 text-left hover:border-cyan-500 transition-colors';
     }
 
+    const trocarModeButton = document.getElementById('needle-mode-trocar');
+    const percutaneousModeButton = document.getElementById('needle-mode-percutaneous');
+    if (trocarModeButton) {
+      trocarModeButton.className = this.needleMode === 'trocar'
+        ? 'px-2 py-0.5 rounded bg-cyan-700 text-white font-bold'
+        : 'px-2 py-0.5 rounded text-slate-400 hover:text-white';
+    }
+    if (percutaneousModeButton) {
+      percutaneousModeButton.className = this.needleMode === 'percutaneous'
+        ? 'px-2 py-0.5 rounded bg-cyan-700 text-white font-bold'
+        : 'px-2 py-0.5 rounded text-slate-400 hover:text-white';
+    }
+
     const portSummary = document.getElementById('port-selection-summary');
     if (portSummary) {
       const probeName = TROCAR_PRESETS[this.activeTrocarId]?.name ?? this.activeTrocarId;

@@ -108,6 +108,13 @@ function runTests() {
   const needleDirection = new THREE.Vector3().subVectors(needle.tip, needle.entry).normalize();
 
   const plane = instruments.getProbeUSPlaneData();
+  instruments.usSliceMesh.updateWorldMatrix(true, false);
+  assertVectorNear(
+    instruments.usSliceMesh.localToWorld(new THREE.Vector3(0, 24, 0)),
+    plane.origin,
+    1e-8,
+    'Rendered scan-plane origin / transducer origin'
+  );
   assertNear(plane.normal.length(), 1, 1e-8, 'Probe plane normal length');
   assertNear(plane.xAxis.length(), 1, 1e-8, 'Probe lateral axis length');
   assertNear(plane.yAxis.length(), 1, 1e-8, 'Probe depth axis length');
@@ -208,6 +215,11 @@ function runTests() {
   const s7Ports = getSuggestedPortSelection(LESION_PRESETS.S7_S8);
   assert(s7Ports.probePort === 'subcostal', 'S7/S8 preset should select subcostal probe port.');
   assert(s7Ports.needlePort === 'itt' && s7Ports.needleMode === 'trocar', 'S7/S8 preset should select ITT needle port.');
+  const percutaneousPorts = getSuggestedPortSelection({
+    ...LESION_PRESETS.S2_S3,
+    suggestedNeedlePort: 'percutaneous'
+  });
+  assert(percutaneousPorts.needleMode === 'percutaneous', 'A percutaneous recommendation should select percutaneous needle mode.');
 
   const identityAxes = {
     center: new THREE.Vector3(),

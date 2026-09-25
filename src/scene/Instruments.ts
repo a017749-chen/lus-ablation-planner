@@ -197,10 +197,14 @@ export class InstrumentBuilder {
     };
 
     const sliceGeom = new THREE.ExtrudeGeometry(sectorShape, extrudeSettings);
-    sliceGeom.center(); // Center around thickness and lateral
-    // Position slice so apex is at transducer face
+    sliceGeom.computeBoundingBox();
+    const thicknessCenter = (
+      sliceGeom.boundingBox!.min.z + sliceGeom.boundingBox!.max.z
+    ) * 0.5;
+    sliceGeom.translate(0, 0, -thicknessCenter);
+    // Keep the scan plane at the transducer face; only the sector depth extends forward.
     sliceGeom.rotateX(Math.PI * 0.5);
-    sliceGeom.translate(0, 24 + scanDepth * 0.5, 0);
+    sliceGeom.translate(0, 24, 0);
 
     const sliceMat = new THREE.MeshPhysicalMaterial({
       color: 0x00ff88,
