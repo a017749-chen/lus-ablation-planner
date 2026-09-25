@@ -265,8 +265,13 @@ class SurgicalPlannerApp {
       solution.depth === undefined
     ) {
       if (status) {
-        status.textContent = `無可行回正解：固定支點距掃描面 ${solution.residualDistanceMm.toFixed(1)} mm；${solution.reason ?? '請調整探頭或選擇經皮模式。'}`;
-        status.className = 'text-[9px] text-rose-300 text-center mt-1';
+        status.innerHTML = `固定套管距切面 ${solution.residualDistanceMm.toFixed(1)} mm。<button id="btn-quick-switch-perc" class="underline text-cyan-300 font-bold ml-1 hover:text-white cursor-pointer">[切換經皮穿刺並回正]</button>`;
+        status.className = 'text-[9px] text-amber-300 text-center mt-1';
+        document.getElementById('btn-quick-switch-perc')?.addEventListener('click', () => {
+          this.needleMode = 'percutaneous';
+          this.syncTrocarSelectionUI();
+          this.autoAlignToUSPlane();
+        });
       }
       return;
     }
@@ -526,8 +531,21 @@ class SurgicalPlannerApp {
     // Trocar selection buttons
     ['umbilical', 'subxiphoid', 'subcostal', 'itt'].forEach(id => {
       document.getElementById(`btn-trocar-${id}`)?.addEventListener('click', () => {
-        this.activeTrocarId = id;
-        this.needleTrocarId = id;
+        if (id === 'itt') {
+          this.needleTrocarId = 'itt';
+          this.needleMode = 'trocar';
+        } else if (id === 'subcostal') {
+          this.activeTrocarId = 'subcostal';
+        } else if (id === 'subxiphoid') {
+          if (this.activeTrocarId === 'subcostal') {
+            this.needleTrocarId = 'subxiphoid';
+            this.needleMode = 'trocar';
+          } else {
+            this.activeTrocarId = 'subxiphoid';
+          }
+        } else if (id === 'umbilical') {
+          this.viewports.setCameraPreset('surgeon');
+        }
         this.syncTrocarSelectionUI();
         this.updateKinematicsAndMath();
       });

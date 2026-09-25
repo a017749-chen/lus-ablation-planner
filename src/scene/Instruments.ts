@@ -167,13 +167,13 @@ export class InstrumentBuilder {
 
     // Acoustic Transducer Tip (Convex array probe)
     const tipGeom = new THREE.BoxGeometry(10, 16, 8);
-    tipGeom.translate(0, 24, 0);
     const tipMat = new THREE.MeshStandardMaterial({
       color: 0x00d2ff,
       metalness: 0.3,
       roughness: 0.3
     });
     const tipMesh = new THREE.Mesh(tipGeom, tipMat);
+    tipMesh.position.set(0, 24, 0);
     headGroup.add(tipMesh);
 
     // 1.5mm Physical Thickness Ultrasound Scan Plane Mesh (Extruded Sector)
@@ -233,8 +233,8 @@ export class InstrumentBuilder {
 
     // Virtual Needle Guide Line (projected dashed trajectory along scan sector)
     const guidePts = [
-      new THREE.Vector3(0, 28, 0),
-      new THREE.Vector3(0, 28 + scanDepth, 0)
+      new THREE.Vector3(0, 24, nearRadius),
+      new THREE.Vector3(0, 24, scanDepth)
     ];
     const guideGeom = new THREE.BufferGeometry().setFromPoints(guidePts);
     const guideMat = new THREE.LineDashedMaterial({

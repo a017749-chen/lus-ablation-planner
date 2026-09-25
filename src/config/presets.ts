@@ -94,7 +94,7 @@ export const LESION_PRESETS: Record<string, LesionPreset> = {
     tumorDiameter: 20, // 2.0 cm
     safetyMargin: 5.0, // +0.5 cm
     suggestedProbePort: 'subcostal',
-    suggestedNeedlePort: 'subcostal',
+    suggestedNeedlePort: 'percutaneous',
     requiresITT: false,
     probeInitialConfig: {
       depth: 120,
