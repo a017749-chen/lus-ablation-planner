@@ -1,10 +1,20 @@
 import * as THREE from 'three';
-import { LESION_PRESETS, getSuggestedPortSelection } from '../config/presets';
+import {
+  LESION_PRESETS,
+  getSuggestedPortSelection,
+  selectNeedleEntry,
+  selectProbePort
+} from '../config/presets';
 import { AlignmentEngine } from '../math/alignmentEngine';
 import { CollisionDetector } from '../math/collision';
 import { estimateEllipsoidTargetOverlap } from '../math/coverage';
 import { FulcrumKinematics } from '../math/kinematics';
 import { WedgeOptimizer } from '../math/wedgeOptimizer';
+import {
+  getSphereSlabIntersection,
+  isPointInUltrasoundSector,
+  ULTRASOUND_SECTOR
+} from '../math/ultrasoundGeometry';
 import { InstrumentBuilder } from '../scene/Instruments';
 
 function assert(condition: boolean, message: string): asserts condition {
@@ -121,6 +131,10 @@ function runTests() {
   assertNear(Math.abs(plane.normal.dot(plane.xAxis)), 0, 1e-8, 'Probe normal/lateral orthogonality');
   assertNear(Math.abs(plane.normal.dot(plane.yAxis)), 0, 1e-8, 'Probe normal/depth orthogonality');
   assertNear(Math.abs(plane.xAxis.dot(plane.yAxis)), 0, 1e-8, 'Probe lateral/depth orthogonality');
+  assertNear(plane.nearRadiusMm, 10, 1e-8, 'Ultrasound near radius');
+  assertNear(plane.farRadiusMm, 105, 1e-8, 'Ultrasound far radius');
+  assertNear(plane.sectorAngleDeg, 75, 1e-8, 'Ultrasound sector angle');
+  assertNear(plane.sliceThicknessMm, 1.5, 1e-8, 'Ultrasound slice thickness');
 
   instruments.usSliceMesh.updateWorldMatrix(true, false);
   const localOrigin = instruments.usSliceMesh.localToWorld(new THREE.Vector3());
@@ -144,47 +158,119 @@ function runTests() {
     'Ablation center / needle-tip offset'
   );
 
-  // A fixed trocar pivot outside the ultrasound plane cannot produce an in-plane shaft.
+  // Auto-align requires the fixed entry, actual lesion-plane overlap, and finite fan bounds.
   const planeOrigin = new THREE.Vector3(0, 0, 0);
   const planeNormal = new THREE.Vector3(0, 0, 1);
   const planeX = new THREE.Vector3(1, 0, 0);
   const planeY = new THREE.Vector3(0, 1, 0);
-  const tumorOnPlane = new THREE.Vector3(32, -22, 0);
-  const infeasible = WedgeOptimizer.autoAlignNeedle(
+  const feasiblePivot = new THREE.Vector3(10, 20, 0);
+  const inPlaneNeedleNormal = new THREE.Vector3(0, 0.7, -0.7).normalize();
+  const tumorInFan = new THREE.Vector3(20, 50, 3);
+  const lesionRadiusMm = 5;
+
+  const fixedTrocarInfeasible = WedgeOptimizer.autoAlignNeedle(
     pivot,
     new THREE.Vector3(-0.5, 0.4, -0.75),
     planeOrigin,
     planeNormal,
     planeX,
     planeY,
-    tumorOnPlane,
+    tumorInFan,
+    lesionRadiusMm,
     false
   );
-  assert(!infeasible.feasible, 'Off-plane trocar pivot must report infeasible.');
-  assertNear(infeasible.residualDistanceMm, 68, 1e-8, 'Off-plane pivot residual');
-  assert(infeasible.pitch === undefined, 'Infeasible result must not expose angles to apply.');
+  assert(!fixedTrocarInfeasible.feasible, 'Off-plane trocar pivot must report infeasible.');
+  assertNear(fixedTrocarInfeasible.residualDistanceMm, 68, 1e-8, 'Off-plane pivot residual');
+  assert(fixedTrocarInfeasible.pitch === undefined, 'Infeasible result must not expose angles to apply.');
 
-  // A feasible solution must place the computed needle segment in the plane.
-  const feasiblePivot = new THREE.Vector3(10, -20, 0);
-  const feasible = WedgeOptimizer.autoAlignNeedle(
+  const offPlaneTumor = WedgeOptimizer.autoAlignNeedle(
     feasiblePivot,
     new THREE.Vector3(0, 0, -1),
     planeOrigin,
     planeNormal,
     planeX,
     planeY,
-    tumorOnPlane,
+    new THREE.Vector3(20, 50, 11),
+    lesionRadiusMm,
     false
   );
-  assert(feasible.feasible, `On-plane pivot should be feasible: ${feasible.reason ?? ''}`);
-  assert(feasible.pitch !== undefined && feasible.yaw !== undefined && feasible.depth !== undefined, 'Feasible solution must contain angles and depth.');
-  const aligned = FulcrumKinematics.computeForward(
+  assert(!offPlaneTumor.feasible, 'A lesion outside its radius from the plane must be rejected.');
+  assertNear(offPlaneTumor.residualDistanceMm, 6, 1e-8, 'Off-plane lesion residual');
+  assert(
+    offPlaneTumor.reason?.includes('no lesion-plane intersection'),
+    'Off-plane lesion rejection should state why the target cannot be hit.'
+  );
+
+  const outsideFan = WedgeOptimizer.autoAlignNeedle(
     feasiblePivot,
     new THREE.Vector3(0, 0, -1),
-    feasible.pitch,
-    feasible.yaw,
+    planeOrigin,
+    planeNormal,
+    planeX,
+    planeY,
+    new THREE.Vector3(0, 112, 0),
+    lesionRadiusMm,
+    false
+  );
+  assert(!outsideFan.feasible, 'A lesion beyond the finite fan depth must be rejected.');
+  assert(
+    outsideFan.reason?.includes('finite ultrasound fan'),
+    'Finite-fan rejection should include an actionable reason.'
+  );
+
+  const outsideFanAngle = WedgeOptimizer.autoAlignNeedle(
+    feasiblePivot,
+    new THREE.Vector3(0, 0.7, -0.7).normalize(),
+    planeOrigin,
+    planeNormal,
+    planeX,
+    planeY,
+    new THREE.Vector3(80, 50, 0),
+    lesionRadiusMm,
+    false
+  );
+  assert(!outsideFanAngle.feasible, 'A lesion outside the sector angle must be rejected.');
+  assert(
+    outsideFanAngle.reason?.includes('finite ultrasound fan'),
+    'Sector-angle rejection should explain the finite fan boundary.'
+  );
+
+  const feasible = WedgeOptimizer.autoAlignNeedle(
+    feasiblePivot,
+    inPlaneNeedleNormal,
+    planeOrigin,
+    planeNormal,
+    planeX,
+    planeY,
+    tumorInFan,
+    lesionRadiusMm,
+    false
+  );
+  assert(feasible.feasible, `On-plane lesion intersection should be feasible: ${feasible.reason ?? ''}`);
+  assert(
+    feasible.pitch !== undefined && feasible.yaw !== undefined && feasible.depth !== undefined,
+    'Feasible solution must contain angles and depth.'
+  );
+  assert(feasible.targetPoint !== undefined, 'Feasible result must return the actual in-plane target point.');
+  assertVectorNear(
+    feasible.targetPoint!,
+    new THREE.Vector3(20, 50, 0),
+    1e-8,
+    'Target point must be a valid lesion-plane intersection'
+  );
+  assertNear(feasible.targetPoint!.distanceTo(tumorInFan), 3, 1e-8, 'Intersection point lies inside lesion radius');
+  assert(
+    isPointInUltrasoundSector(20, 50, ULTRASOUND_SECTOR),
+    'Valid lesion-plane target must lie in the finite ultrasound fan.'
+  );
+
+  const aligned = FulcrumKinematics.computeForward(
+    feasiblePivot,
+    inPlaneNeedleNormal,
+    feasible.pitch!,
+    feasible.yaw!,
     0,
-    feasible.depth
+    feasible.depth!
   );
   const alignment = AlignmentEngine.evaluate(
     planeOrigin,
@@ -195,21 +281,66 @@ function runTests() {
     aligned.tip
   );
   assert(alignment.status === 'IN_PLANE', `Aligned needle status must be IN_PLANE; got ${alignment.status}.`);
-  assertNear(aligned.tip.distanceTo(tumorOnPlane), 0, 1e-6, 'Auto-align target accuracy');
+  assert(
+    aligned.tip.distanceTo(tumorInFan) <= lesionRadiusMm + 1e-6,
+    'The needle endpoint must remain inside the actual lesion.'
+  );
+  assert(
+    isPointInUltrasoundSector(aligned.tip.x, aligned.tip.y, ULTRASOUND_SECTOR),
+    'The needle endpoint must lie within finite ultrasound fan bounds.'
+  );
 
+  // Percutaneous entry points are fixed; an off-plane entry cannot be silently projected.
+  const fixedPercutaneousPivot = new THREE.Vector3(10, 20, 1.5);
   const percutaneous = WedgeOptimizer.autoAlignNeedle(
-    pivot,
+    fixedPercutaneousPivot,
     new THREE.Vector3(0, 0, -1),
     planeOrigin,
     planeNormal,
     planeX,
     planeY,
-    tumorOnPlane,
+    tumorInFan,
+    lesionRadiusMm,
     true
   );
-  assert(percutaneous.feasible, 'Percutaneous solution should move its pivot to the plane.');
-  assert(percutaneous.adjustedPivot !== undefined, 'Percutaneous solution must return its adjusted pivot.');
-  assertNear(percutaneous.adjustedPivot.z, 0, 1e-8, 'Percutaneous pivot plane offset');
+  assert(!percutaneous.feasible, 'An off-plane percutaneous entry must report infeasible.');
+  assert(
+    percutaneous.reason?.includes('Fixed percutaneous entry') &&
+      percutaneous.reason?.includes('not moved'),
+    'Percutaneous infeasibility must explain that the fixed entry was preserved.'
+  );
+  assert(percutaneous.targetPoint === undefined, 'Infeasible fixed-entry result must not provide an aim point.');
+
+  const percutaneousOnPlane = WedgeOptimizer.autoAlignNeedle(
+    feasiblePivot,
+    inPlaneNeedleNormal,
+    planeOrigin,
+    planeNormal,
+    planeX,
+    planeY,
+    tumorInFan,
+    lesionRadiusMm,
+    true
+  );
+  assert(percutaneousOnPlane.feasible, 'An on-plane fixed percutaneous entry can be feasible.');
+  assert(
+    !('adjustedPivot' in percutaneousOnPlane),
+    'Auto-align must not return a moved percutaneous pivot.'
+  );
+
+  // The simulated 1.5mm slab draws only its actual sphere intersection.
+  const visibleSlice = getSphereSlabIntersection(5, 3, ULTRASOUND_SECTOR.sliceThicknessMm);
+  assert(visibleSlice.visible, 'A lesion intersecting the scan slab should be visible.');
+  assertNear(visibleSlice.effectiveOffsetMm, 2.25, 1e-8, 'Effective slice offset');
+  assertNear(
+    visibleSlice.crossSectionRadiusMm,
+    Math.sqrt(25 - 2.25 * 2.25),
+    1e-8,
+    'Slice cross-section radius'
+  );
+  const outOfSlice = getSphereSlabIntersection(5, 14, ULTRASOUND_SECTOR.sliceThicknessMm);
+  assert(!outOfSlice.visible, 'A lesion 14mm off-plane must be hidden by the 1.5mm slab.');
+  assertNear(outOfSlice.crossSectionRadiusMm, 0, 1e-8, 'Invisible slice has no displayed radius');
 
   // Preset port recommendations are independent: S7/S8 uses subcostal probe and ITT needle.
   const s7Ports = getSuggestedPortSelection(LESION_PRESETS.S7_S8);
@@ -220,6 +351,29 @@ function runTests() {
     suggestedNeedlePort: 'percutaneous'
   });
   assert(percutaneousPorts.needleMode === 'percutaneous', 'A percutaneous recommendation should select percutaneous needle mode.');
+
+  const changedProbe = selectProbePort(percutaneousPorts, 'subxiphoid');
+  assert(changedProbe.probePort === 'subxiphoid', 'Probe selector should update the probe port.');
+  assert(
+    changedProbe.needlePort === percutaneousPorts.needlePort &&
+      changedProbe.needleMode === percutaneousPorts.needleMode,
+    'Changing the probe selector must preserve needle-entry state.'
+  );
+  const changedNeedle = selectNeedleEntry(changedProbe, 'itt');
+  assert(
+    changedNeedle.probePort === changedProbe.probePort,
+    'Changing the needle-entry selector must preserve the probe port.'
+  );
+  assert(
+    changedNeedle.needlePort === 'itt' && changedNeedle.needleMode === 'trocar',
+    'Selecting ITT must independently select trocar mode.'
+  );
+  const changedToPercutaneous = selectNeedleEntry(changedNeedle, 'percutaneous');
+  assert(
+    changedToPercutaneous.probePort === 'subxiphoid' &&
+      changedToPercutaneous.needleMode === 'percutaneous',
+    'Selecting percutaneous must preserve the probe port and set percutaneous mode.'
+  );
 
   const identityAxes = {
     center: new THREE.Vector3(),
@@ -247,7 +401,24 @@ function runTests() {
   );
   assert(disjoint === 0, 'Disjoint target and ellipsoid should report 0% overlap.');
 
-  // Preserve threshold collision behavior for vessel clearance.
+  // Vessel alerts use simulated shaft surface clearance, including the 0.8mm shaft radius.
+  const vesselSegment = {
+    name: 'Test vessel',
+    type: 'ivc' as const,
+    start: new THREE.Vector3(0, -20, 0),
+    end: new THREE.Vector3(0, 20, 0),
+    radius: 5,
+    color: 0
+  };
+  const shaftClearance = CollisionDetector.checkCollision(
+    new THREE.Vector3(8, -10, 0),
+    new THREE.Vector3(8, 10, 0),
+    [vesselSegment]
+  );
+  assertNear(shaftClearance.minDistance, 2.2, 1e-8, 'Needle shaft radius is subtracted from clearance');
+  assert(shaftClearance.hasCollision, 'Less than 5mm shaft surface clearance must trigger a warning.');
+
+  // Preserve collision checks against the built-in vascular tree.
   const vesselCollision = CollisionDetector.checkCollision(
     new THREE.Vector3(12, -70, -35),
     new THREE.Vector3(10, 85, -28)
@@ -261,10 +432,12 @@ function runTests() {
 
   console.log('PASS: kinematics round-trip and pitch sign');
   console.log('PASS: rendered needle, ultrasound plane, and ablation ellipsoid share world coordinates');
-  console.log('PASS: auto-align feasibility and residual checks');
+  console.log('PASS: lesion intersection, finite fan, and fixed-entry auto-align feasibility');
+  console.log('PASS: 1.5mm ultrasound slab visibility and cross-section geometry');
+  console.log('PASS: independent probe and needle-entry selectors');
   console.log('PASS: lesion port recommendations');
   console.log('PASS: ellipsoid geometric overlap estimate');
-  console.log('PASS: vessel collision detection');
+  console.log('PASS: needle-shaft surface clearance and vessel warnings');
 }
 
 runTests();

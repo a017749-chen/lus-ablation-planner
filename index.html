@@ -45,13 +45,13 @@
       <div class="hidden md:flex items-center space-x-3 px-3 py-1.5 bg-[#0e1726] border border-[#1e2f47] rounded-md font-mono text-xs">
         <div class="flex items-center space-x-1.5">
           <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-          <span class="text-slate-400 text-[10px]">IVC dist:</span>
+          <span class="text-slate-400 text-[10px]" title="Needle-shaft surface clearance only; does not assess ablation-zone or thermal safety">IVC shaft clr:</span>
           <span id="hud-ivc-dist" class="font-bold text-cyan-300">22.4 mm</span>
         </div>
         <div class="w-px h-4 bg-slate-700"></div>
         <div class="flex items-center space-x-1.5">
           <span class="w-2 h-2 rounded-full bg-purple-500"></span>
-          <span class="text-slate-400 text-[10px]">PV dist:</span>
+          <span class="text-slate-400 text-[10px]" title="Needle-shaft surface clearance only; does not assess ablation-zone or thermal safety">PV shaft clr:</span>
           <span id="hud-pv-dist" class="font-bold text-cyan-300">18.6 mm</span>
         </div>
         <div id="hud-vessel-alert" class="hidden px-1.5 py-0.5 rounded bg-red-600/80 text-white font-bold text-[9px] animate-pulse">
@@ -191,7 +191,7 @@
         <div class="h-6 med-panel-header px-2 flex items-center justify-between z-10">
           <div class="flex items-center space-x-1.5">
             <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span class="text-[10px] font-mono font-bold tracking-wider text-emerald-300">B-MODE ULTRASOUND (7.5 MHz)</span>
+            <span class="text-[10px] font-mono font-bold tracking-wider text-emerald-300">B-MODE ULTRASOUND SIMULATION (7.5 MHz)</span>
           </div>
           <div class="flex items-center space-x-1 text-[9px] font-mono text-slate-400">
             <span>THICKNESS: 1.5mm</span>
@@ -209,7 +209,7 @@
             GUIDE: ACTIVE
           </div>
           <div class="absolute bottom-1 left-2 pointer-events-none font-mono text-[8px] text-slate-500">
-            [GE Healthcare / Hitachi LUS Mimic]
+            [示意超音波畫面 · Synthetic B-Mode]
           </div>
         </div>
       </div>
@@ -271,36 +271,35 @@
             </span>
           </div>
 
-          <!-- Trocar selection radio -->
-          <div class="grid grid-cols-2 gap-1.5 text-[10px]">
-            <button id="btn-trocar-umbilical" class="p-1.5 rounded border border-slate-700 bg-slate-800/80 text-left hover:border-cyan-500 transition-colors">
-              <div class="text-cyan-400 font-bold">1. 臍孔 (Umbilical)</div>
-              <div class="text-slate-400 text-[9px]">10mm 腹腔鏡視角</div>
-            </button>
-            <button id="btn-trocar-subxiphoid" class="p-1.5 rounded border border-slate-700 bg-slate-800/80 text-left hover:border-cyan-500 transition-colors">
-              <div class="text-slate-300 font-bold">2. 劍突下 (Subxiphoid)</div>
-              <div class="text-slate-400 text-[9px]">5mm 輔助通道</div>
-            </button>
-            <button id="btn-trocar-subcostal" class="p-1.5 rounded border border-cyan-500 bg-cyan-950/40 text-left shadow-sm">
-              <div class="text-cyan-300 font-bold">3. 右肋下 (R-Subcostal)</div>
-              <div class="text-slate-400 text-[9px]">12mm LUS 探頭主套管</div>
-            </button>
-            <button id="btn-trocar-itt" class="p-1.5 rounded border border-amber-800/60 bg-slate-900 text-left opacity-60 hover:opacity-100 transition-opacity">
-              <div class="text-amber-400 font-bold flex items-center space-x-1">
-                <span>4. 肋間經胸 (ITT)</span>
-                <span id="itt-status-pill" class="text-[8px] px-1 bg-amber-950 text-amber-300 rounded">待命</span>
-              </div>
-              <div class="text-slate-400 text-[9px]">S7/S8 橫膈穹頂專用</div>
-            </button>
+          <div class="grid grid-cols-1 gap-2 text-[10px]">
+            <label class="space-y-1">
+              <span class="block text-slate-300 font-bold">超音波探頭通道 (Probe port)</span>
+              <select id="probe-port-select" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100">
+                <option value="subcostal">右肋下 (Right subcostal)</option>
+                <option value="subxiphoid">劍突下 (Subxiphoid)</option>
+                <option value="umbilical">臍孔 (Umbilical)</option>
+                <option value="itt">肋間經胸 ITT</option>
+              </select>
+            </label>
+            <label class="space-y-1">
+              <span class="block text-slate-300 font-bold">穿刺針入口 (Needle entry)</span>
+              <select id="needle-entry-select" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100">
+                <option value="percutaneous">經皮固定示意入口</option>
+                <option value="subcostal">右肋下套管 (Right subcostal)</option>
+                <option value="subxiphoid">劍突下套管 (Subxiphoid)</option>
+                <option value="itt">肋間經胸套管 (ITT)</option>
+              </select>
+            </label>
+            <div class="text-[9px] text-slate-400">ITT 狀態：<span id="itt-status-pill" class="px-1 bg-amber-950 text-amber-300 rounded">待命</span></div>
           </div>
 
           <div id="port-selection-summary" class="text-[9px] text-cyan-200 bg-slate-950/60 p-2 rounded border border-slate-800">
-            探頭：右肋下套管｜穿刺針：右肋下套管
+            超音波探頭：右肋下套管｜穿刺入口：經皮固定示意入口
           </div>
 
           <div class="text-[10px] text-slate-400 bg-slate-950/60 p-2 rounded border border-slate-800">
-            <span class="text-cyan-400 font-bold">支點約束效應 (Fulcrum Kinematics)：</span>
-            套管於腹壁為固定轉動原點，器械保留 4 自由度（Pitch, Yaw, Depth, Roll）。
+            <span class="text-cyan-400 font-bold">固定支點示意：</span>
+            套管入口是固定轉動點；經皮模式使用固定虛擬示意座標 (65, 0, 70 mm)，不是病人解剖定位。自動回正不會移動任何入口。此模型不提供臨床導航或安全判定。
           </div>
         </div>
 
@@ -358,10 +357,7 @@
               <span class="w-2 h-2 rounded-full bg-amber-400"></span>
               <span>4. 消融穿刺針調校 (Ablation Needle)</span>
             </span>
-            <div class="flex bg-slate-800 rounded p-0.5 text-[9px]">
-              <button id="needle-mode-trocar" class="px-2 py-0.5 rounded bg-cyan-700 text-white font-bold">套管進針</button>
-              <button id="needle-mode-percutaneous" class="px-2 py-0.5 rounded text-slate-400 hover:text-white">經皮穿刺</button>
-            </div>
+            <span class="text-[10px] text-amber-300">入口由第二區獨立選擇</span>
           </div>
 
           <!-- Needle Pitch Adjustment -->
@@ -370,7 +366,7 @@
               <span class="text-slate-400">針體俯仰 (Pitch Angle):</span>
               <span id="val-needle-pitch" class="font-bold text-amber-300">42.0°</span>
             </div>
-            <input type="range" id="input-needle-pitch" min="-80" max="80" step="0.5" value="42" class="w-full">
+            <input type="range" id="input-needle-pitch" min="-80" max="80" step="any" value="42" class="w-full">
           </div>
 
           <!-- Needle Yaw Adjustment -->
@@ -379,7 +375,7 @@
               <span class="text-slate-400">針體偏擺 (Yaw Angle):</span>
               <span id="val-needle-yaw" class="font-bold text-amber-300">-15.0°</span>
             </div>
-            <input type="range" id="input-needle-yaw" min="-80" max="80" step="0.5" value="-15" class="w-full">
+            <input type="range" id="input-needle-yaw" min="-80" max="80" step="any" value="-15" class="w-full">
           </div>
 
           <!-- Needle Penetration Depth -->
@@ -388,7 +384,7 @@
               <span class="text-slate-400">針尖穿刺深度 (Depth):</span>
               <span id="val-needle-depth" class="font-bold text-amber-300">85.0 mm</span>
             </div>
-            <input type="range" id="input-needle-depth" min="10" max="180" step="1" value="85" class="w-full">
+            <input type="range" id="input-needle-depth" min="10" max="180" step="any" value="85" class="w-full">
           </div>
 
           <!-- AUTO-ALIGN BUTTON -->
@@ -399,7 +395,7 @@
               </svg>
               <span>一鍵自動回正 (Auto-Align to US Plane)</span>
             </button>
-            <p id="auto-align-status" class="text-[9px] text-slate-400 text-center mt-1">依固定支點檢查幾何可行性；無可行解時顯示殘餘偏差</p>
+            <p id="auto-align-status" class="text-[9px] text-slate-400 text-center mt-1">檢查固定入口、病灶與有限超音波扇面是否有幾何可行解</p>
           </div>
         </div>
 
@@ -408,7 +404,7 @@
           <div class="flex items-center justify-between text-slate-300 font-bold border-b border-slate-800 pb-1.5">
             <span class="flex items-center space-x-1.5">
               <span class="w-2 h-2 rounded-full bg-rose-500"></span>
-              <span>5. 熱消融壞死區模擬 (Thermal Ablation)</span>
+              <span>5. 消融區幾何示意 (Ablation Geometry)</span>
             </span>
             <label class="relative inline-flex items-center cursor-pointer">
               <input type="checkbox" id="toggle-ablation-sim" class="sr-only peer">
@@ -419,7 +415,7 @@
           <!-- Ablation Sphere Diameter -->
           <div class="space-y-1">
             <div class="flex justify-between text-[11px]">
-              <span class="text-slate-400">消融球體直徑 (Necrosis Dia):</span>
+              <span class="text-slate-400">示意消融區短軸直徑:</span>
               <span id="val-ablation-dia" class="font-bold text-rose-400">35.0 mm</span>
             </div>
             <input type="range" id="input-ablation-dia" min="20" max="55" step="1" value="35" class="w-full">
@@ -435,10 +431,7 @@
               <span class="text-slate-400">目標體積幾何重疊估計:</span>
               <span id="ablation-coverage-stat" class="text-amber-400 font-bold">尚未估算</span>
             </div>
-            <div class="flex justify-between">
-              <span class="text-slate-400">最靠近血管最小間隔:</span>
-              <span id="ablation-vessel-clearance" class="text-cyan-400 font-bold">12.3 mm (安全)</span>
-            </div>
+            <p class="text-[9px] text-slate-400">幾何重疊不代表熱劑量、腫瘤控制或血管安全；血管提示只計算針身外表面間距，不評估消融區。</p>
           </div>
         </div>
 

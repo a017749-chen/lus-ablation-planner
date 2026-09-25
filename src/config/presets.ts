@@ -157,14 +157,36 @@ export const LESION_PRESETS: Record<string, LesionPreset> = {
 };
 
 /** Resolve the separate probe and needle ports selected by a lesion preset. */
-export function getSuggestedPortSelection(preset: LesionPreset): {
+export interface PortSelectionState {
   probePort: LesionPreset['suggestedProbePort'];
   needlePort: LesionPreset['suggestedNeedlePort'];
   needleMode: 'trocar' | 'percutaneous';
-} {
+}
+
+export function getSuggestedPortSelection(preset: LesionPreset): PortSelectionState {
   return {
     probePort: preset.suggestedProbePort,
     needlePort: preset.suggestedNeedlePort,
     needleMode: preset.suggestedNeedlePort === 'percutaneous' ? 'percutaneous' : 'trocar'
+  };
+}
+
+/** Change the probe port while preserving the independently selected needle entry. */
+export function selectProbePort(
+  selection: PortSelectionState,
+  probePort: PortSelectionState['probePort']
+): PortSelectionState {
+  return { ...selection, probePort };
+}
+
+/** Change the needle entry while preserving the independently selected probe port. */
+export function selectNeedleEntry(
+  selection: PortSelectionState,
+  needlePort: PortSelectionState['needlePort']
+): PortSelectionState {
+  return {
+    ...selection,
+    needlePort,
+    needleMode: needlePort === 'percutaneous' ? 'percutaneous' : 'trocar'
   };
 }
