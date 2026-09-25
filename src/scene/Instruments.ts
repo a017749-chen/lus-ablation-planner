@@ -35,11 +35,18 @@ export interface InstrumentSystem {
     depth: number,
     pitch: number,
     yaw: number,
-    roll?: number
+    roll?: number,
+    percutaneousNormal?: THREE.Vector3
   ): void;
   setNeedleAlignmentVisuals(status: AlignmentStatus): void;
   setAblationPreview(visible: boolean, diameterMm: number): void;
   setTrocarActive(trocarId: string, active: boolean): void;
+  updateWedgeVisual(
+    visible: boolean,
+    pointA?: THREE.Vector3,
+    pointB?: THREE.Vector3,
+    pointC?: THREE.Vector3
+  ): void;
 }
 
 export class InstrumentBuilder {
@@ -64,7 +71,9 @@ export class InstrumentBuilder {
     // 3. Build Ablation Needle & Thermal Zone
     const { needleGroup, ablationSphere, getNeedlePts, getAblationEllipsoid, updateNeedleKinematics, setAlignmentColor } =
       InstrumentBuilder.createAblationNeedle();
-    group.add(needleGroup);
+    // 4. Build Right-Angle Wedge Visual Guide
+    const { wedgeGroup, updateWedge } = InstrumentBuilder.createWedgeGuide();
+    group.add(wedgeGroup);
 
     return {
       group,
@@ -89,7 +98,8 @@ export class InstrumentBuilder {
         if (tr) {
           tr.visible = active;
         }
-      }
+      },
+      updateWedgeVisual: updateWedge
     };
   }
 
@@ -412,7 +422,8 @@ export class InstrumentBuilder {
       depth: number,
       pitch: number,
       yaw: number,
-      roll: number = 0
+      roll: number = 0,
+      percutaneousNormal?: THREE.Vector3
     ) => {
       let pivot: THREE.Vector3;
       let normal: THREE.Vector3;
@@ -423,7 +434,7 @@ export class InstrumentBuilder {
         normal = def.defaultDirection;
       } else {
         pivot = percutaneousPivot;
-        normal = new THREE.Vector3(0, 0, -1);
+        normal = percutaneousNormal ? percutaneousNormal.clone().normalize() : new THREE.Vector3(0, 0, -1);
       }
 
       const fulcrum = FulcrumKinematics.computeForward(
@@ -469,5 +480,94 @@ export class InstrumentBuilder {
     };
 
     return { needleGroup, ablationSphere, getNeedlePts, getAblationEllipsoid, updateNeedleKinematics, setAlignmentColor };
+  }
+
+  /**
+   * Create Right-Angle Wedge Visual Guide (Triangle ABC + Point C Marker)
+   */
+  private static createWedgeGuide(): {
+    wedgeGroup: THREE.Group;
+    updateWedge: (
+      visible: boolean,
+      pointA?: THREE.Vector3,
+      pointB?: THREE.Vector3,
+      pointC?: THREE.Vector3
+    ) => void;
+  } {
+    const wedgeGroup = new THREE.Group();
+    wedgeGroup.name = 'RightAngleWedgeGuide';
+    wedgeGroup.visible = false;
+
+    // Glowing Point C entry marker (sphere + ring)
+    const markerGeom = new THREE.SphereGeometry(2.5, 16, 16);
+    const markerMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff });
+    const markerMesh = new THREE.Mesh(markerGeom, markerMat);
+    wedgeGroup.add(markerMesh);
+
+    const ringGeom = new THREE.RingGeometry(3.5, 5.0, 24);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff, side: THREE.DoubleSide });
+    const ringMesh = new THREE.Mesh(ringGeom, ringMat);
+    wedgeGroup.add(ringMesh);
+
+    // Triangle ABC semi-transparent planar surface
+    const triGeom = new THREE.BufferGeometry();
+    const positions = new Float32Array(9); // 3 vertices * 3 coordinates
+    triGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const triMat = new THREE.MeshBasicMaterial({
+      color: 0x00e5ff,
+      transparent: true,
+      opacity: 0.14,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    const triMesh = new THREE.Mesh(triGeom, triMat);
+    wedgeGroup.add(triMesh);
+
+    // Triangle ABC perimeter wireframe
+    const wireGeom = new THREE.BufferGeometry();
+    const wirePositions = new Float32Array(9);
+    wireGeom.setAttribute('position', new THREE.BufferAttribute(wirePositions, 3));
+    const wireMat = new THREE.LineBasicMaterial({
+      color: 0x00e5ff,
+      transparent: true,
+      opacity: 0.75
+    });
+    const wire = new THREE.LineLoop(wireGeom, wireMat);
+    wedgeGroup.add(wire);
+
+    const updateWedge = (
+      visible: boolean,
+      pointA?: THREE.Vector3,
+      pointB?: THREE.Vector3,
+      pointC?: THREE.Vector3
+    ) => {
+      if (!visible || !pointA || !pointB || !pointC) {
+        wedgeGroup.visible = false;
+        return;
+      }
+      wedgeGroup.visible = true;
+
+      // Position marker at point C
+      markerMesh.position.copy(pointC);
+      ringMesh.position.copy(pointC);
+      ringMesh.lookAt(pointB);
+
+      // Update triangle vertices: Point A (transducer), Point B (tumor), Point C (entry)
+      const posAttr = triGeom.getAttribute('position') as THREE.BufferAttribute;
+      const wireAttr = wireGeom.getAttribute('position') as THREE.BufferAttribute;
+      const arr = posAttr.array as Float32Array;
+
+      arr[0] = pointA.x; arr[1] = pointA.y; arr[2] = pointA.z;
+      arr[3] = pointB.x; arr[4] = pointB.y; arr[5] = pointB.z;
+      arr[6] = pointC.x; arr[7] = pointC.y; arr[8] = pointC.z;
+      posAttr.needsUpdate = true;
+      triGeom.computeVertexNormals();
+
+      const wireArr = wireAttr.array as Float32Array;
+      wireArr.set(arr);
+      wireAttr.needsUpdate = true;
+    };
+
+    return { wedgeGroup, updateWedge };
   }
 }

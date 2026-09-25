@@ -301,8 +301,8 @@
           </div>
 
           <div class="text-[10px] text-slate-400 bg-slate-950/60 p-2 rounded border border-slate-800">
-            <span class="text-cyan-400 font-bold">固定支點示意：</span>
-            套管入口是固定轉動點；經皮模式使用固定虛擬示意座標 (65, 0, 70 mm)，不是病人解剖定位。自動回正不會移動任何入口。此模型不提供臨床導航或安全判定。
+            <span class="text-cyan-400 font-bold">支點幾何說明：</span>
+            套管為腹壁固定支點；若需完全共面穿刺，可使用「楔形幾何最佳化 (Right-Angle Wedge)」依當前超音波切面計算最佳經皮進針點 C (Optimal Entry Point)。此模型為幾何輔助示意，不提供臨床導航或安全判定。
           </div>
         </div>
 
@@ -390,15 +390,28 @@
             <input type="range" id="input-needle-depth" min="10" max="180" step="any" value="85" class="w-full">
           </div>
 
-          <!-- AUTO-ALIGN BUTTON -->
-          <div class="pt-1">
+          <!-- AUTO-ALIGN & WEDGE BUTTONS -->
+          <div class="pt-1 space-y-2">
             <button id="btn-auto-align" class="w-full py-2.5 rounded-lg bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-black font-extrabold text-xs shadow-glow-neon flex items-center justify-center space-x-2 transition-all active:scale-[0.98]">
               <svg class="w-4 h-4 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <span>一鍵自動回正 (Auto-Align to US Plane)</span>
             </button>
-            <p id="auto-align-status" class="text-[9px] text-slate-400 text-center mt-1">檢查固定入口、病灶與有限超音波扇面是否有幾何可行解</p>
+            <button id="btn-wedge-optimize" type="button" class="w-full py-2 rounded-lg bg-slate-900 border border-cyan-500/70 hover:bg-cyan-950 text-cyan-300 font-bold text-xs flex items-center justify-center space-x-2 transition-all">
+              <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              <span>規劃楔形最佳進針點 C (Wedge Point C)</span>
+            </button>
+            <div class="flex items-center justify-between text-[10px] text-slate-400 px-0.5">
+              <span>楔形導引三角視角</span>
+              <label class="flex items-center space-x-1 cursor-pointer">
+                <input type="checkbox" id="toggle-wedge-guide" checked class="rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-0">
+                <span class="text-slate-300">顯示 ΔABC</span>
+              </label>
+            </div>
+            <div id="auto-align-status" class="text-[9px] text-slate-400 text-center mt-1">檢查固定入口、病灶與有限超音波扇面是否有幾何可行解</div>
           </div>
         </div>
 

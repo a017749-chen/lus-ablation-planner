@@ -31,6 +31,8 @@ class SurgicalPlannerApp {
   private activePreset: LesionPreset = LESION_PRESETS['S5_S6'];
   private portSelection: PortSelectionState = getSuggestedPortSelection(LESION_PRESETS['S5_S6']);
   private percutaneousPivot: THREE.Vector3 = new THREE.Vector3(65, 0, 70);
+  private percutaneousNormal: THREE.Vector3 = new THREE.Vector3(0, 0, -1);
+  private isWedgeGuideVisible: boolean = true;
 
   private get activeTrocarId() {
     return this.portSelection.probePort;
@@ -165,6 +167,13 @@ class SurgicalPlannerApp {
     this.needlePitch = preset.needleInitialConfig.pitch;
     this.needleYaw = preset.needleInitialConfig.yaw;
 
+    if (preset.needleInitialConfig.percutaneousEntry) {
+      this.percutaneousPivot.copy(preset.needleInitialConfig.percutaneousEntry);
+    } else {
+      this.percutaneousPivot.set(65, 0, 70);
+    }
+    this.percutaneousNormal.set(0, 0, -1);
+
     // Sync input sliders
     this.syncSlidersToState();
     this.updateKinematicsAndMath();
@@ -237,8 +246,24 @@ class SurgicalPlannerApp {
   public autoAlignToUSPlane() {
     const probePlane = this.instruments.getProbeUSPlaneData();
     const trocarDef = TROCAR_PRESETS[this.needleTrocarId] || TROCAR_PRESETS['subcostal'];
+
+    // In percutaneous mode: if current pivot is off-plane, automatically calculate Wedge Entry Point C on the US plane
+    if (this.needleMode === 'percutaneous') {
+      const planeDistance = Math.abs(new THREE.Vector3().subVectors(this.percutaneousPivot, probePlane.origin).dot(probePlane.normal));
+      if (planeDistance > WedgeOptimizer.PLANE_DISTANCE_TOLERANCE_MM) {
+        const wedge = WedgeOptimizer.computeWedgeGeometry(
+          probePlane.origin,
+          probePlane.yAxis,
+          probePlane.normal,
+          this.activePreset.tumorPosition
+        );
+        this.percutaneousPivot.copy(wedge.optimalEntryPoint);
+        this.percutaneousNormal.copy(wedge.trajectoryDir);
+      }
+    }
+
     const pivot = this.needleMode === 'trocar' ? trocarDef.pivotPosition : this.percutaneousPivot;
-    const normal = this.needleMode === 'trocar' ? trocarDef.defaultDirection : new THREE.Vector3(0, 0, -1);
+    const normal = this.needleMode === 'trocar' ? trocarDef.defaultDirection : this.percutaneousNormal;
     const tumorRadiusMm = this.tumorDiameter * 0.5;
 
     const solution = WedgeOptimizer.autoAlignNeedle(
@@ -262,10 +287,17 @@ class SurgicalPlannerApp {
       solution.depth === undefined
     ) {
       if (status) {
-        status.textContent =
-          `無可行解：${solution.reason ?? '幾何條件不成立'}（距離殘差 ${solution.residualDistanceMm.toFixed(1)} mm；角度殘差 ${solution.residualAngleDeg.toFixed(1)}°）。`;
+        const isTrocar = this.needleMode === 'trocar';
+        status.innerHTML =
+          `無可行解：${solution.reason ?? '幾何條件不成立'}（距離殘差 ${solution.residualDistanceMm.toFixed(1)} mm；角度殘差 ${solution.residualAngleDeg.toFixed(1)}°）。` +
+          (isTrocar
+            ? `<div class="mt-1.5"><button id="btn-quick-switch-wedge" type="button" class="w-full py-1 px-2 rounded bg-cyan-900/80 border border-cyan-500 hover:bg-cyan-800 text-cyan-200 text-[10px] font-bold transition-colors">切換經皮最佳進針點 C 並回正</button></div>`
+            : '');
         status.className = 'text-[9px] text-amber-300 text-center mt-1';
         status.dataset.autoAlignResult = 'failed';
+        document.getElementById('btn-quick-switch-wedge')?.addEventListener('click', () => {
+          this.optimizeWedgeEntryPointC();
+        });
       }
       return;
     }
@@ -316,6 +348,35 @@ class SurgicalPlannerApp {
   }
 
   /**
+   * Plan Right-Angle Wedge Entry Point C & Auto-Align (楔形幾何最佳化穿刺規劃)
+   */
+  public optimizeWedgeEntryPointC() {
+    const probePlane = this.instruments.getProbeUSPlaneData();
+    const wedge = WedgeOptimizer.computeWedgeGeometry(
+      probePlane.origin,
+      probePlane.yAxis,
+      probePlane.normal,
+      this.activePreset.tumorPosition
+    );
+
+    this.percutaneousPivot.copy(wedge.optimalEntryPoint);
+    this.percutaneousNormal.copy(wedge.trajectoryDir);
+
+    if (this.needleMode !== 'percutaneous') {
+      this.portSelection = selectNeedleEntry(this.portSelection, 'percutaneous');
+      this.syncTrocarSelectionUI();
+    }
+
+    this.autoAlignToUSPlane();
+
+    const status = document.getElementById('auto-align-status');
+    if (status && status.dataset.autoAlignResult === 'success') {
+      status.textContent =
+        `楔形最佳進針點 C 已定位 (X:${wedge.optimalEntryPoint.x.toFixed(0)}, Y:${wedge.optimalEntryPoint.y.toFixed(0)}, Z:${wedge.optimalEntryPoint.z.toFixed(0)})，針尖已成功共面回正！`;
+    }
+  }
+
+  /**
    * Main mathematical update cycle
    */
   private updateKinematicsAndMath() {
@@ -345,7 +406,9 @@ class SurgicalPlannerApp {
       this.percutaneousPivot,
       this.needleDepth,
       this.needlePitch,
-      this.needleYaw
+      this.needleYaw,
+      0,
+      this.percutaneousNormal
     );
 
     // 4. In-Plane Alignment Calculation
@@ -363,6 +426,14 @@ class SurgicalPlannerApp {
 
     // Update needle visuals
     this.instruments.setNeedleAlignmentVisuals(this.latestAlignment.status);
+
+    // 4b. Update Right-Angle Wedge Visual Guide (Triangle ABC)
+    this.instruments.updateWedgeVisual(
+      this.isWedgeGuideVisible,
+      planeData.origin,
+      this.activePreset.tumorPosition,
+      this.needleMode === 'percutaneous' ? this.percutaneousPivot : undefined
+    );
 
     // 5. Collision Detection with Critical Vessels
     this.latestCollision = CollisionDetector.checkCollision(
@@ -618,9 +689,16 @@ class SurgicalPlannerApp {
       this.updateKinematicsAndMath();
     });
 
-    // Auto-Align Buttons
+    // Auto-Align & Wedge Buttons
     document.getElementById('btn-auto-align')?.addEventListener('click', () => this.autoAlignToUSPlane());
     document.getElementById('btn-quick-auto-align')?.addEventListener('click', () => this.autoAlignToUSPlane());
+    document.getElementById('btn-wedge-optimize')?.addEventListener('click', () => this.optimizeWedgeEntryPointC());
+
+    const toggleWedge = document.getElementById('toggle-wedge-guide') as HTMLInputElement | null;
+    toggleWedge?.addEventListener('change', (e) => {
+      this.isWedgeGuideVisible = (e.target as HTMLInputElement).checked;
+      this.updateKinematicsAndMath();
+    });
 
     // Thermal Ablation Toggle & Slider
     const toggleAblation = document.getElementById('toggle-ablation-sim') as HTMLInputElement;

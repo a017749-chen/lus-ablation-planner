@@ -6,3 +6,4 @@ dist-ssr/
 .idea/
 .DS_Store
 *.log
+clean/
