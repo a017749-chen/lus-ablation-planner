@@ -5,7 +5,7 @@ import {
   getSphereSlabIntersection,
   isPointInUltrasoundSector,
   ULTRASOUND_SECTOR,
-  UltrasoundSectorBounds
+  ImageBounds
 } from './ultrasoundGeometry';
 
 export interface AutoAlignNeedleSolution {
@@ -108,7 +108,7 @@ export class WedgeOptimizer {
     tumorCenter: THREE.Vector3,
     tumorRadiusMm: number,
     isPercutaneous: boolean = false,
-    sectorBounds: UltrasoundSectorBounds = ULTRASOUND_SECTOR
+    sectorBounds: ImageBounds = ULTRASOUND_SECTOR
   ): AutoAlignNeedleSolution {
     const n = planeNormal.clone().normalize();
     const xAxis = planeXAxis.clone().normalize();

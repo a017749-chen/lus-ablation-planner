@@ -3,6 +3,8 @@ import { FulcrumKinematics } from '../math/kinematics';
 import { AlignmentResult } from '../math/alignmentEngine';
 import { closestPointInUltrasoundSector, getSphereSlabIntersection } from '../math/ultrasoundGeometry';
 import { ProbeUSPlaneData } from '../scene/Instruments';
+import { LUS_PROBE } from '../config/probe';
+import { guideDirection2D } from '../math/sideViewProbe';
 
 export interface UltrasoundSimParams {
   canvas: HTMLCanvasElement;
@@ -78,27 +80,25 @@ export class UltrasoundSim {
     ctx.fillStyle = '#020408';
     ctx.fillRect(0, 0, w, h);
 
-    // Convex sector geometry in 2D canvas coordinates
+    // Linear-array image: a rectangle, array face along the top edge.
+    // apexX/apexY mark the array centre; lateral and depth share one scale.
+    const depthSpan = probePlane.farDepthMm;
+    const scale = Math.min((h - 24) / depthSpan, (w - 48) / (probePlane.halfWidthMm * 2));
     const apexX = w * 0.5;
     const apexY = 12;
-    const maxRadius = h - 18;
-    const scale = maxRadius / probePlane.farRadiusMm;
-    const startRadius = probePlane.nearRadiusMm * scale;
-    const sectorAngle = THREE.MathUtils.degToRad(probePlane.sectorAngleDeg);
-    const halfAngle = sectorAngle * 0.5;
-    const startAngle = Math.PI * 0.5 - halfAngle;
-    const endAngle = Math.PI * 0.5 + halfAngle;
+    const startRadius = probePlane.nearDepthMm * scale;
+    const maxRadius = probePlane.farDepthMm * scale;
+    const halfWidthPx = probePlane.halfWidthMm * scale;
+    const imageRect = () => ctx.rect(apexX - halfWidthPx, apexY + startRadius, halfWidthPx * 2, maxRadius - startRadius);
 
-    // 1. Clip to sector path
+    // 1. Clip to the image rectangle
     ctx.save();
     ctx.beginPath();
-    ctx.arc(apexX, apexY, maxRadius, startAngle, endAngle, false);
-    ctx.arc(apexX, apexY, startRadius, endAngle, startAngle, true);
-    ctx.closePath();
+    imageRect();
     ctx.clip();
 
-    // 2. Draw Liver Parenchyma base texture with depth attenuation (TGC)
-    const tgcGrad = ctx.createRadialGradient(apexX, apexY, startRadius, apexX, apexY, maxRadius);
+    // 2. Liver parenchyma base texture with depth attenuation (TGC)
+    const tgcGrad = ctx.createLinearGradient(0, apexY + startRadius, 0, apexY + maxRadius);
     tgcGrad.addColorStop(0.0, 'rgba(55, 65, 60, 0.95)');
     tgcGrad.addColorStop(0.5, 'rgba(38, 48, 44, 0.9)');
     tgcGrad.addColorStop(1.0, 'rgba(15, 20, 18, 0.85)');
@@ -286,12 +286,15 @@ export class UltrasoundSim {
       // OUT-OF-PLANE: No needle echo visible on the B-mode ultrasound slice!
     }
 
-    // 5. Virtual Needle Guide Trajectory Overlay (Dashed Line)
+    // 5. Needle-guide line: from the guide hole at its fixed angle, as the scanner draws it.
+    const { du, dv } = guideDirection2D(LUS_PROBE);
+    const hole = { u: -LUS_PROBE.guide.holeOffsetMm, v: -LUS_PROBE.guide.holeHeightMm };
+    const guideT = (probePlane.farDepthMm - hole.v) / dv;
     ctx.beginPath();
     ctx.setLineDash([4, 4]);
-    ctx.moveTo(apexX, apexY + startRadius);
-    ctx.lineTo(apexX, apexY + maxRadius);
-    ctx.strokeStyle = alignment.status === 'IN_PLANE' ? 'rgba(0, 255, 102, 0.5)' : 'rgba(0, 210, 255, 0.35)';
+    ctx.moveTo(apexX + hole.u * scale, apexY + hole.v * scale);
+    ctx.lineTo(apexX + (hole.u + du * guideT) * scale, apexY + (hole.v + dv * guideT) * scale);
+    ctx.strokeStyle = alignment.status === 'IN_PLANE' ? 'rgba(0, 255, 102, 0.6)' : 'rgba(255, 212, 0, 0.55)';
     ctx.lineWidth = 1.0;
     ctx.stroke();
     ctx.setLineDash([]);
@@ -299,19 +302,19 @@ export class UltrasoundSim {
     // Restore clip
     ctx.restore();
 
-    // 6. Ultrasound Sector Border & Caliper Depth Graticule
+    // 6. Image border and array face
     ctx.beginPath();
-    ctx.arc(apexX, apexY, maxRadius, startAngle, endAngle, false);
-    ctx.arc(apexX, apexY, startRadius, endAngle, startAngle, true);
-    ctx.closePath();
+    imageRect();
     ctx.strokeStyle = 'rgba(0, 210, 255, 0.4)';
     ctx.lineWidth = 1.2;
     ctx.stroke();
+    ctx.fillStyle = 'rgba(0, 210, 255, 0.8)';
+    ctx.fillRect(apexX - halfWidthPx, apexY - 3, halfWidthPx * 2, 3);
 
     // Depth scale ticks along right edge
     ctx.fillStyle = 'rgba(150, 180, 200, 0.75)';
     ctx.font = '8px "JetBrains Mono", monospace';
-    for (let cm = 2; cm <= 10; cm += 2) {
+    for (let cm = 1; cm * 10 <= probePlane.farDepthMm; cm += 1) {
       const tickDepth = apexY + (cm * 10) * scale;
       ctx.fillRect(w - 14, tickDepth, 8, 1);
       ctx.fillText(`${cm}`, w - 24, tickDepth + 3);

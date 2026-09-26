@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { LUS_PROBE } from '../config/probe';
+import { forwardProbe } from '../math/sideViewProbe';
 import {
   LESION_PRESETS,
   TROCAR_PRESETS,
@@ -164,7 +166,9 @@ function runTests() {
 
   // Rendered needle, probe, scan plane and ablation zone use the same world frame as the math.
   const instruments = InstrumentBuilder.build();
-  instruments.updateProbe('subcostal', 120, 27, -18, 11);
+  instruments.updateProbe(forwardProbe(TROCAR_PRESETS.subcostal.pivotPosition, TROCAR_PRESETS.subcostal.defaultDirection, {
+    shaftPitchDeg: 12, shaftYawDeg: -8, insertionMm: 110, rollDeg: 11, flexUpDownDeg: 27, flexLeftRightDeg: -18
+  }));
   instruments.updateNeedle(
     'trocar',
     'subcostal',
@@ -184,10 +188,10 @@ function runTests() {
   const plane = instruments.getProbeUSPlaneData();
   instruments.usSliceMesh.updateWorldMatrix(true, false);
   assertVectorNear(
-    instruments.usSliceMesh.localToWorld(new THREE.Vector3(0, 24, 0)),
+    instruments.usSliceMesh.localToWorld(new THREE.Vector3(0, 0, 0)),
     plane.origin,
     1e-8,
-    'Rendered scan-plane origin / transducer origin'
+    'Rendered scan-plane origin / array centre'
   );
   assertNear(plane.normal.length(), 1, 1e-8, 'Probe plane normal length');
   assertNear(plane.xAxis.length(), 1, 1e-8, 'Probe lateral axis length');
@@ -195,9 +199,9 @@ function runTests() {
   assertNear(Math.abs(plane.normal.dot(plane.xAxis)), 0, 1e-8, 'Probe normal/lateral orthogonality');
   assertNear(Math.abs(plane.normal.dot(plane.yAxis)), 0, 1e-8, 'Probe normal/depth orthogonality');
   assertNear(Math.abs(plane.xAxis.dot(plane.yAxis)), 0, 1e-8, 'Probe lateral/depth orthogonality');
-  assertNear(plane.nearRadiusMm, 10, 1e-8, 'Ultrasound near radius');
-  assertNear(plane.farRadiusMm, 105, 1e-8, 'Ultrasound far radius');
-  assertNear(plane.sectorAngleDeg, 75, 1e-8, 'Ultrasound sector angle');
+  assert(plane.kind === 'linear', 'Side-viewing linear array image');
+  assertNear(plane.halfWidthMm, LUS_PROBE.arrayLengthMm / 2, 1e-8, 'Image half-width equals half the array');
+  assertNear(plane.farDepthMm, LUS_PROBE.image.farDepthMm, 1e-8, 'Image depth');
   assertNear(plane.sliceThicknessMm, 1.5, 1e-8, 'Ultrasound slice thickness');
 
   instruments.usSliceMesh.updateWorldMatrix(true, false);
@@ -648,10 +652,15 @@ function runTests() {
   assert(skinMat.depthWrite, 'Opaque skin must write depth');
 
   for (const marker of anatomy.skinIncisionMarkers.children) {
-    const expectedSkinPoint = getAnteriorSkinSurfacePoint(marker.position.x, marker.position.y, 1);
+    // Markers sit 1 mm out along the skin normal. Stepping back along that normal
+    // must land on the surface; re-sampling the surface at the marker's own x, y
+    // does not, because the normal offset also moves x and y.
+    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(marker.quaternion);
+    const footPoint = marker.position.clone().addScaledVector(normal, -1);
+    const expectedSkinPoint = getAnteriorSkinSurfacePoint(footPoint.x, footPoint.y);
     assert(expectedSkinPoint, `${marker.name} must fall on the anterior skin surface.`);
     assertVectorNear(
-      marker.position,
+      footPoint,
       expectedSkinPoint,
       1e-6,
       `${marker.name} must be projected onto the shared skin surface`

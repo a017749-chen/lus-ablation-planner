@@ -1,9 +1,24 @@
 import * as THREE from 'three';
 
 export interface UltrasoundSectorBounds {
+  kind?: 'sector';
   nearRadiusMm: number;
   farRadiusMm: number;
   sectorAngleDeg: number;
+}
+
+/** Rectangular image of a linear array: lateral +-halfWidth, depth near..far below the face. */
+export interface LinearImageBounds {
+  kind: 'linear';
+  halfWidthMm: number;
+  nearDepthMm: number;
+  farDepthMm: number;
+}
+
+export type ImageBounds = UltrasoundSectorBounds | LinearImageBounds;
+
+function isLinear(bounds: ImageBounds): bounds is LinearImageBounds {
+  return bounds.kind === 'linear';
 }
 
 export const ULTRASOUND_SECTOR: Readonly<UltrasoundSectorBounds & { sliceThicknessMm: number }> = {
@@ -52,12 +67,20 @@ export interface SectorClosestPoint {
   distanceMm: number;
 }
 
-/** Find the closest point in a finite annular sector, measured from the +depth axis. */
+/**
+ * Closest point inside the image: an annular sector for convex/phased arrays, a
+ * rectangle for a linear array.
+ */
 export function closestPointInUltrasoundSector(
   lateralMm: number,
   depthMm: number,
-  bounds: UltrasoundSectorBounds = ULTRASOUND_SECTOR
+  bounds: ImageBounds = ULTRASOUND_SECTOR
 ): SectorClosestPoint {
+  if (isLinear(bounds)) {
+    const lateral = THREE.MathUtils.clamp(lateralMm, -bounds.halfWidthMm, bounds.halfWidthMm);
+    const depth = THREE.MathUtils.clamp(depthMm, bounds.nearDepthMm, bounds.farDepthMm);
+    return { lateralMm: lateral, depthMm: depth, distanceMm: Math.hypot(lateralMm - lateral, depthMm - depth) };
+  }
   const halfAngle = THREE.MathUtils.degToRad(bounds.sectorAngleDeg * 0.5);
   const targetAngle = Math.atan2(lateralMm, depthMm);
   const angle = THREE.MathUtils.clamp(targetAngle, -halfAngle, halfAngle);
@@ -76,9 +99,14 @@ export function closestPointInUltrasoundSector(
 export function isPointInUltrasoundSector(
   lateralMm: number,
   depthMm: number,
-  bounds: UltrasoundSectorBounds = ULTRASOUND_SECTOR,
+  bounds: ImageBounds = ULTRASOUND_SECTOR,
   toleranceMm: number = 1e-8
 ): boolean {
+  if (isLinear(bounds)) {
+    return Math.abs(lateralMm) <= bounds.halfWidthMm + toleranceMm &&
+      depthMm >= bounds.nearDepthMm - toleranceMm &&
+      depthMm <= bounds.farDepthMm + toleranceMm;
+  }
   const radius = Math.hypot(lateralMm, depthMm);
   const angle = Math.atan2(lateralMm, depthMm);
   const halfAngle = THREE.MathUtils.degToRad(bounds.sectorAngleDeg * 0.5);

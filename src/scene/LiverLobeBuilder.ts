@@ -20,7 +20,7 @@ export interface IllustrativeLobes {
  * Dimensions preserve the former model's approximate total volume and a 70:30
  * right-to-left lobe volume cue. This is not patient-specific anatomy.
  */
-const MODEL = {
+export const ILLUSTRATIVE_LIVER_MODEL = {
   interfaceX: 15,
   centerY: 25,
   centerZ: -10,
@@ -31,6 +31,7 @@ const MODEL = {
   longitudinalSegments: 48,
   radialSegments: 64
 } as const;
+const MODEL = ILLUSTRATIVE_LIVER_MODEL;
 
 export function buildIllustrativeLobes(): IllustrativeLobes {
   return {

@@ -16,11 +16,22 @@ import { MultiViewport, ViewportManager } from './views/MultiViewport';
 import { UltrasoundSim } from './views/UltrasoundSim';
 import { AlignmentEngine, AlignmentResult } from './math/alignmentEngine';
 import { FulcrumKinematics } from './math/kinematics';
-import { getAnteriorSkinSurfacePoint } from './math/skinSurface';
+import { getAnteriorSkinSurfaceNormal, getAnteriorSkinSurfacePoint } from './math/skinSurface';
 import { CollisionDetector, CollisionCheckResult } from './math/collision';
 import { WedgeOptimizer } from './math/wedgeOptimizer';
 import { estimateEllipsoidTargetOverlap } from './math/coverage';
 import { isPointInUltrasoundSector } from './math/ultrasoundGeometry';
+import { LUS_PROBE } from './config/probe';
+import { forwardProbe, guideLine, guideVisibleDepth, inverseProbe, ProbeControls } from './math/sideViewProbe';
+import {
+  buildSkinMap,
+  evaluateFreehandEntry,
+  evaluateProbePort,
+  REASON_TEXT,
+  poseProbeForNeedle,
+  solveGuidedNeedle
+} from './math/portPlanner';
+import { raySkinIntersection } from './math/anatomyShapes';
 
 class SurgicalPlannerApp {
   private scene: THREE.Scene;
@@ -56,6 +67,15 @@ class SurgicalPlannerApp {
   private probePitch: number = 28;
   private probeYaw: number = 12;
   private probeRoll: number = 0;
+  private probeFlexUD: number = 30;
+  private probeFlexLR: number = 0;
+
+  // Skin port planning
+  private customProbePort: { pivot: THREE.Vector3; direction: THREE.Vector3 } | null = null;
+  private plannerClickMode: 'off' | 'probe' | 'needle' = 'off';
+  private plannerNeedleMode: 'guided' | 'freehand' = 'guided';
+  private skinMapVisible = false;
+  private skinMapGroup = new THREE.Group();
 
   // Needle Kinematics
   private needleDepth: number = 85;
@@ -184,9 +204,13 @@ class SurgicalPlannerApp {
     }
     this.percutaneousNormal.set(0, 0, -1);
 
+    this.customProbePort = null;
+    this.poseProbeByPlanner(true);
+
     // Sync input sliders
     this.syncSlidersToState();
     this.updateKinematicsAndMath();
+    this.refreshSkinMap();
   }
 
 
@@ -200,7 +224,7 @@ class SurgicalPlannerApp {
 
     const probePortSelect = document.getElementById('probe-port-select') as HTMLSelectElement | null;
     const needleEntrySelect = document.getElementById('needle-entry-select') as HTMLSelectElement | null;
-    if (probePortSelect) probePortSelect.value = this.portSelection.probePort;
+    if (probePortSelect) probePortSelect.value = this.customProbePort ? 'custom' : this.portSelection.probePort;
     if (needleEntrySelect) needleEntrySelect.value = this.portSelection.needlePort;
 
     const portSummary = document.getElementById('port-selection-summary');
@@ -229,7 +253,7 @@ class SurgicalPlannerApp {
     document.getElementById('val-margin-dist')!.textContent = `+${this.safetyMargin.toFixed(1)} mm`;
 
     (document.getElementById('input-probe-depth') as HTMLInputElement).value = String(this.probeDepth);
-    document.getElementById('val-probe-depth')!.textContent = `${this.probeDepth} mm`;
+    document.getElementById('val-probe-depth')!.textContent = `${this.probeDepth.toFixed(0)} mm`;
 
     (document.getElementById('input-probe-pitch') as HTMLInputElement).value = String(this.probePitch);
     document.getElementById('val-probe-pitch')!.textContent = `${this.probePitch.toFixed(1)}°`;
@@ -239,6 +263,12 @@ class SurgicalPlannerApp {
 
     (document.getElementById('input-probe-roll') as HTMLInputElement).value = String(this.probeRoll);
     document.getElementById('val-probe-roll')!.textContent = `${this.probeRoll.toFixed(1)}°`;
+
+    (document.getElementById('input-probe-flexud') as HTMLInputElement).value = String(this.probeFlexUD);
+    document.getElementById('val-probe-flexud')!.textContent = `${this.probeFlexUD.toFixed(1)}°`;
+
+    (document.getElementById('input-probe-flexlr') as HTMLInputElement).value = String(this.probeFlexLR);
+    document.getElementById('val-probe-flexlr')!.textContent = `${this.probeFlexLR.toFixed(1)}°`;
 
     (document.getElementById('input-needle-depth') as HTMLInputElement).value = String(this.needleDepth);
     document.getElementById('val-needle-depth')!.textContent = `${this.needleDepth.toFixed(1)} mm`;
@@ -369,7 +399,15 @@ class SurgicalPlannerApp {
       this.activePreset.tumorPosition
     );
 
-    this.percutaneousPivot.copy(wedge.optimalEntryPoint);
+    // Run the in-plane trajectory back from the target to the skin: point C is a skin
+    // puncture, not a point floating in the scan plane.
+    const onSkin = raySkinIntersection(wedge.targetPoint, wedge.trajectoryDir.clone().negate());
+    if (!onSkin) {
+      this.plannerReport('楔形軌跡往回延伸碰不到前腹壁，無法在皮膚上定出 C 點。');
+      return;
+    }
+    wedge.optimalEntryPoint.copy(onSkin);
+    this.percutaneousPivot.copy(onSkin);
     this.percutaneousNormal.copy(wedge.trajectoryDir);
 
     if (this.needleMode !== 'percutaneous') {
@@ -463,6 +501,251 @@ class SurgicalPlannerApp {
   /**
    * Main mathematical update cycle
    */
+  // ===================== Skin port planning =====================
+
+  /** The trocar the probe pivots at: a preset port, or a point picked on the skin. */
+  private probePort(): { pivot: THREE.Vector3; direction: THREE.Vector3 } {
+    if (this.customProbePort) return this.customProbePort;
+    const def = TROCAR_PRESETS[this.activeTrocarId] ?? TROCAR_PRESETS['subcostal'];
+    return { pivot: def.pivotPosition, direction: def.defaultDirection };
+  }
+
+  private probeControls(): ProbeControls {
+    return {
+      shaftPitchDeg: this.probePitch,
+      shaftYawDeg: this.probeYaw,
+      insertionMm: this.probeDepth,
+      rollDeg: this.probeRoll,
+      flexUpDownDeg: this.probeFlexUD,
+      flexLeftRightDeg: this.probeFlexLR
+    };
+  }
+
+  /** Exact values are kept: rounding to slider steps would tilt the plane off the target. */
+  private setProbeControls(c: ProbeControls) {
+    this.probePitch = c.shaftPitchDeg;
+    this.probeYaw = c.shaftYawDeg;
+    this.probeDepth = c.insertionMm;
+    this.probeRoll = c.rollDeg;
+    this.probeFlexUD = c.flexUpDownDeg;
+    this.probeFlexLR = c.flexLeftRightDeg;
+  }
+
+  private plannerReport(html: string) {
+    const el = document.getElementById('planner-report');
+    if (el) el.innerHTML = html;
+  }
+
+  private reasonList(reasons: string[], warnings: string[] = []): string {
+    const r = reasons.map(k => `<li class="text-rose-300">✘ ${REASON_TEXT[k as keyof typeof REASON_TEXT] ?? k}</li>`);
+    const w = warnings.map(k => `<li class="text-amber-300">⚠ ${REASON_TEXT[k as keyof typeof REASON_TEXT] ?? k}</li>`);
+    return r.length || w.length ? `<ul class="mt-1 space-y-0.5">${[...r, ...w].join('')}</ul>` : '';
+  }
+
+  private fmt(v: THREE.Vector3): string {
+    return `(${v.x.toFixed(0)}, ${v.y.toFixed(0)}, ${v.z.toFixed(0)})`;
+  }
+
+  /** Put the probe on a window that images the target from the current port. */
+  private poseProbeByPlanner(quiet: boolean): boolean {
+    const port = this.probePort();
+    const result = evaluateProbePort(port.pivot, this.activePreset.tumorPosition);
+    if (!result.feasible || !result.leastFlex) {
+      if (!quiet) this.plannerReport(`<b class="text-rose-300">這個探頭孔無法掃到腫瘤</b>${this.reasonList(result.reasons, result.warnings)}`);
+      return false;
+    }
+    this.setProbeControls(inverseProbe(result.leastFlex.pose, port.direction));
+    if (!quiet) {
+      const pose = result.leastFlex.pose;
+      this.plannerReport(
+        `<b class="text-emerald-300">✔ 探頭可從這裡掃到腫瘤</b>（${result.feasibleWindowCount} 個可行聲窗）<br>` +
+        `目前擺放：插入 ${pose.insertionMm.toFixed(0)} mm、尖端彎 ${pose.flexDeg.toFixed(0)}°、腫瘤深 ${result.leastFlex.window.depthMm.toFixed(0)} mm<br>` +
+        `<span class="text-slate-500">取彎曲最小的一組只是幾何上的選法，不是臨床建議。</span>` +
+        this.reasonList([], result.warnings)
+      );
+    }
+    return true;
+  }
+
+  /** Needle from a skin point, aimed at a point; sets the needle to percutaneous mode. */
+  private setPercutaneousNeedle(skin: THREE.Vector3, aim: THREE.Vector3) {
+    const inward = getAnteriorSkinSurfaceNormal(skin.x, skin.y)?.negate() ?? new THREE.Vector3(0, 0, -1);
+    this.percutaneousPivot.copy(skin);
+    this.percutaneousNormal.copy(inward);
+    const solution = FulcrumKinematics.solveAimTarget(skin, inward, aim);
+    this.needlePitch = solution.pitch;
+    this.needleYaw = solution.yaw;
+    this.needleDepth = solution.insertionDepth;
+    if (this.needleMode !== 'percutaneous') {
+      this.portSelection = selectNeedleEntry(this.portSelection, 'percutaneous');
+      this.syncTrocarSelectionUI();
+    }
+  }
+
+  /** Needle through the probe's guide hole: pose the probe, then the skin entry follows. */
+  private applyGuidedPlan() {
+    const port = this.probePort();
+    const target = this.activePreset.tumorPosition;
+    const result = solveGuidedNeedle(port.pivot, target);
+    const depth = guideVisibleDepth();
+    if (!result.feasible || !result.leastFlex) {
+      const range = depth ? `導引線在影像內只到 ${depth.min.toFixed(0)}–${depth.max.toFixed(0)} mm 深。` : '導引線不經過影像。';
+      this.plannerReport(`<b class="text-rose-300">從這個探頭孔無法用導引孔打到腫瘤</b><br><span class="text-slate-400">${range}</span>${this.reasonList(result.reasons)}`);
+      return;
+    }
+    const s = result.leastFlex;
+    this.setProbeControls(inverseProbe(s.pose, port.direction));
+    const guide = guideLine(s.pose);
+    const along = target.clone().sub(guide.hole).dot(guide.direction);
+    this.setPercutaneousNeedle(s.skinEntry, guide.hole.clone().addScaledVector(guide.direction, along));
+    this.plannerReport(
+      `<b class="text-emerald-300">✔ 可經導引孔進針</b>（${result.solutions.length} 組探頭擺法）<br>` +
+      `皮膚穿刺點 ${this.fmt(s.skinEntry)}，針長 ${s.needle.lengthMm.toFixed(0)} mm<br>` +
+      `針道距血管 ${s.needle.vesselClearanceMm.toFixed(1)} mm（${s.needle.closestVessel}）<br>` +
+      `探頭：插入 ${s.pose.insertionMm.toFixed(0)} mm、尖端彎 ${s.pose.flexDeg.toFixed(0)}°；導引線離腫瘤中心 ${s.guideMissMm.toFixed(1)} mm<br>` +
+      `<span class="text-slate-500">皮膚點由探頭姿態決定。取彎曲最小的一組只是幾何選法。</span>` +
+      this.reasonList([], s.needle.warnings)
+    );
+  }
+
+  private onSkinPicked(hit: THREE.Vector3) {
+    const skin = getAnteriorSkinSurfacePoint(hit.x, hit.y);
+    const normal = getAnteriorSkinSurfaceNormal(hit.x, hit.y);
+    if (!skin || !normal) return;
+    const target = this.activePreset.tumorPosition;
+
+    if (this.plannerClickMode === 'probe') {
+      this.customProbePort = { pivot: skin, direction: normal.clone().negate() };
+      this.syncTrocarSelectionUI();
+      const ok = this.poseProbeByPlanner(false);
+      if (ok && this.plannerNeedleMode === 'guided') {
+        const guided = solveGuidedNeedle(skin, target);
+        const el = document.getElementById('planner-report');
+        if (el) el.innerHTML += guided.feasible
+          ? `<div class="mt-1 text-amber-200">導引孔進針：可行（${guided.solutions.length} 組）。按「套用導引孔進針」。</div>`
+          : `<div class="mt-1 text-amber-200">導引孔進針：不可行${this.reasonList(guided.reasons)}</div>`;
+      }
+    } else if (this.plannerClickMode === 'needle') {
+      const result = evaluateFreehandEntry(skin, target);
+      this.setPercutaneousNeedle(skin, target);
+      let probeLine = '';
+      if (result.feasible) {
+        const aligned = poseProbeForNeedle(this.probePort().pivot, skin, target);
+        if (aligned.solution) {
+          this.setProbeControls(inverseProbe(aligned.solution.pose, this.probePort().direction));
+          probeLine = `<br>探頭已轉到讓影像面包含這條針道（尖端彎 ${aligned.solution.pose.flexDeg.toFixed(0)}°）。`;
+        } else {
+          probeLine = `<div class="text-amber-200">目前的探頭孔無法讓影像面包含這條針道${this.reasonList(aligned.reasons)}</div>`;
+        }
+      }
+      this.plannerReport(
+        (result.feasible
+          ? `<b class="text-emerald-300">✔ 這個進針點可行</b><br>`
+          : `<b class="text-rose-300">這個進針點不可行</b><br>`) +
+        `皮膚點 ${this.fmt(skin)}，針長 ${result.lengthMm.toFixed(0)} mm，距血管 ${result.vesselClearanceMm.toFixed(1)} mm` +
+        (result.needleBeamAngleDeg !== undefined ? `，針與聲束夾角 ${result.needleBeamAngleDeg.toFixed(0)}°` : '') +
+        probeLine + this.reasonList(result.reasons, result.warnings)
+      );
+    }
+    this.syncSlidersToState();
+    this.updateKinematicsAndMath();
+  }
+
+  /** Coloured dots on the skin: where a probe port / a freehand needle entry can work. */
+  private refreshSkinMap() {
+    this.skinMapGroup.clear();
+    if (!this.skinMapVisible) return;
+    const cells = buildSkinMap(this.activePreset.tumorPosition, 10);
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const color = new THREE.Color();
+    for (const cell of cells) {
+      const n = getAnteriorSkinSurfaceNormal(cell.skin.x, cell.skin.y)!;
+      const p = cell.skin.clone().addScaledVector(n, 2);
+      positions.push(p.x, p.y, p.z);
+      if (cell.probeOk && cell.needleOk) color.set(0x22d3ee);
+      else if (cell.probeOk) color.set(0x34d399);
+      else if (cell.needleOk) color.set(0x60a5fa);
+      else color.set(0x475569);
+      if (cell.overRibCage) color.multiplyScalar(0.6);
+      colors.push(color.r, color.g, color.b);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    const points = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 6, vertexColors: true, sizeAttenuation: true }));
+    points.name = 'SkinFeasibilityMap';
+    this.skinMapGroup.add(points);
+  }
+
+  private updateGuideDepthLabel() {
+    const label = document.getElementById('planner-guide-depth');
+    const depth = guideVisibleDepth();
+    if (label) label.textContent = depth ? `${depth.min.toFixed(0)}–${depth.max.toFixed(0)} mm` : '導引線不經過影像';
+    const badge = document.getElementById('planner-calibration-badge');
+    if (badge) badge.textContent = LUS_PROBE.calibrated ? '探頭規格已校正' : '探頭規格未校正';
+  }
+
+  private bindPlannerEvents() {
+    this.scene.add(this.skinMapGroup);
+    this.updateGuideDepthLabel();
+
+    document.getElementById('planner-click-mode')?.addEventListener('change', (e) => {
+      this.plannerClickMode = (e.target as HTMLSelectElement).value as typeof this.plannerClickMode;
+      this.plannerReport(this.plannerClickMode === 'off'
+        ? '選擇「點皮膚設定」後在 3D 畫面的皮膚上點一下。'
+        : `在 3D 畫面的皮膚上點一下設定${this.plannerClickMode === 'probe' ? '探頭套管位置' : '徒手進針點'}（拖曳仍可旋轉畫面）。`);
+    });
+    document.getElementById('planner-needle-mode')?.addEventListener('change', (e) => {
+      this.plannerNeedleMode = (e.target as HTMLSelectElement).value as typeof this.plannerNeedleMode;
+    });
+    document.getElementById('planner-guide-angle')?.addEventListener('change', (e) => {
+      const value = Number((e.target as HTMLInputElement).value);
+      if (Number.isFinite(value) && value > 0 && value < 90) LUS_PROBE.guide.angleDeg = value;
+      this.updateGuideDepthLabel();
+      this.updateKinematicsAndMath();
+    });
+    document.getElementById('planner-guide-ref')?.addEventListener('change', (e) => {
+      LUS_PROBE.guide.angleReference = (e.target as HTMLSelectElement).value as typeof LUS_PROBE.guide.angleReference;
+      this.updateGuideDepthLabel();
+      this.updateKinematicsAndMath();
+    });
+    document.getElementById('toggle-skin-map')?.addEventListener('change', (e) => {
+      this.skinMapVisible = (e.target as HTMLInputElement).checked;
+      this.refreshSkinMap();
+    });
+    document.getElementById('btn-planner-pose-probe')?.addEventListener('click', () => {
+      this.poseProbeByPlanner(false);
+      this.syncSlidersToState();
+      this.updateKinematicsAndMath();
+    });
+    document.getElementById('btn-planner-apply-guided')?.addEventListener('click', () => {
+      this.applyGuidedPlan();
+      this.syncSlidersToState();
+      this.updateKinematicsAndMath();
+    });
+
+    // A click (not a drag) on the skin sets a port or needle entry.
+    const canvas = this.viewports.mainRenderer.domElement;
+    let down: { x: number; y: number } | null = null;
+    canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
+    canvas.addEventListener('pointerup', (e) => {
+      if (!down || this.plannerClickMode === 'off') return;
+      const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+      down = null;
+      if (moved > 4) return;
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(ndc, this.viewports.mainCamera);
+      const hit = raycaster.intersectObject(this.anatomy.skinDome, false)[0];
+      if (hit) this.onSkinPicked(hit.point);
+    });
+  }
+
   private updateKinematicsAndMath() {
     const autoAlignStatus = document.getElementById('auto-align-status');
     if (autoAlignStatus?.dataset.autoAlignResult) {
@@ -478,12 +761,14 @@ class SurgicalPlannerApp {
     this.anatomy.updatePercutaneousIncision(this.percutaneousPivot);
 
     // 2. Update LUS Probe kinematics
-    this.instruments.updateProbe(
-      this.activeTrocarId,
-      this.probeDepth,
-      this.probePitch,
-      this.probeYaw,
-      this.probeRoll
+    const port = this.probePort();
+    const probePose = forwardProbe(port.pivot, port.direction, this.probeControls());
+    this.instruments.updateProbe(probePose);
+    // Where a needle through the guide hole would have to enter the skin for this pose.
+    const guide = guideLine(probePose);
+    this.instruments.setGuideExtension(
+      raySkinIntersection(guide.hole, guide.direction.clone().negate()),
+      guide.hole
     );
 
     // 3. Update Ablation Needle kinematics
@@ -757,8 +1042,18 @@ class SurgicalPlannerApp {
     const probePortSelect = document.getElementById('probe-port-select') as HTMLSelectElement | null;
     probePortSelect?.addEventListener('change', (event) => {
       const port = (event.target as HTMLSelectElement).value;
+      if (port === 'custom') {
+        if (!this.customProbePort) {
+          this.plannerReport('先把「點皮膚設定」切到「探頭套管位置」，再點皮膚。');
+          this.syncTrocarSelectionUI();
+        }
+        return;
+      }
       if (!isProbePort(port)) return;
+      this.customProbePort = null;
       this.portSelection = selectProbePort(this.portSelection, port);
+      this.poseProbeByPlanner(false);
+      this.syncSlidersToState();
       this.syncTrocarSelectionUI();
       this.updateKinematicsAndMath();
     });
@@ -775,7 +1070,7 @@ class SurgicalPlannerApp {
     const inputProbeDepth = document.getElementById('input-probe-depth') as HTMLInputElement;
     inputProbeDepth?.addEventListener('input', (e) => {
       this.probeDepth = Number((e.target as HTMLInputElement).value);
-      document.getElementById('val-probe-depth')!.textContent = `${this.probeDepth} mm`;
+      document.getElementById('val-probe-depth')!.textContent = `${this.probeDepth.toFixed(0)} mm`;
       this.updateKinematicsAndMath();
     });
 
@@ -799,6 +1094,19 @@ class SurgicalPlannerApp {
       document.getElementById('val-probe-roll')!.textContent = `${this.probeRoll.toFixed(1)}°`;
       this.updateKinematicsAndMath();
     });
+
+    document.getElementById('input-probe-flexud')?.addEventListener('input', (e) => {
+      this.probeFlexUD = Number((e.target as HTMLInputElement).value);
+      document.getElementById('val-probe-flexud')!.textContent = `${this.probeFlexUD.toFixed(1)}°`;
+      this.updateKinematicsAndMath();
+    });
+    document.getElementById('input-probe-flexlr')?.addEventListener('input', (e) => {
+      this.probeFlexLR = Number((e.target as HTMLInputElement).value);
+      document.getElementById('val-probe-flexlr')!.textContent = `${this.probeFlexLR.toFixed(1)}°`;
+      this.updateKinematicsAndMath();
+    });
+
+    this.bindPlannerEvents();
 
     // Needle Kinematics Sliders
     const inputNeedlePitch = document.getElementById('input-needle-pitch') as HTMLInputElement;
@@ -940,5 +1248,7 @@ class SurgicalPlannerApp {
 
 // Instantiate application on DOM ready
 window.addEventListener('DOMContentLoaded', () => {
-  new SurgicalPlannerApp();
+  const app = new SurgicalPlannerApp();
+  // Development builds expose the app for debugging in the browser console.
+  if (import.meta.env.DEV) (window as unknown as { __planner?: SurgicalPlannerApp }).__planner = app;
 });
