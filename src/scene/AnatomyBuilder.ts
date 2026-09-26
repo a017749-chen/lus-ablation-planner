@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CollisionDetector, VesselSegment } from '../math/collision';
 import { TROCAR_PRESETS } from '../config/presets';
 import { ANTERIOR_SKIN_SURFACE, getAnteriorSkinSurfaceNormal, getAnteriorSkinSurfacePoint } from '../math/skinSurface';
+import { COSTAL_MARGIN, costalMarginPoint } from '../math/anatomyShapes';
 import { buildIllustrativeLobes } from './LiverLobeBuilder';
 
 export interface AnatomyMeshes {
@@ -174,11 +175,11 @@ export class AnatomyBuilder {
     // 2. Costal Margin Line & Ribs
     const costalMarginPoints: THREE.Vector3[] = [];
     // Arc tracing xiphoid down along both costal margins
-    for (let t = -Math.PI * 0.45; t <= Math.PI * 0.45; t += 0.05) {
-      const x = Math.sin(t) * 115;
-      const y = Math.cos(t) * 95 - 20;
-      const z = Math.cos(t * 1.5) * 45 + 30;
-      costalMarginPoints.push(new THREE.Vector3(x, y, z));
+    // Same arc the planner uses for its rib-cage check, laid on the skin surface.
+    for (let t = -COSTAL_MARGIN.maxAngle; t <= COSTAL_MARGIN.maxAngle + 1e-9; t += 0.05) {
+      const { x, y } = costalMarginPoint(t);
+      const onSkin = getAnteriorSkinSurfacePoint(x, y, 1.5);
+      if (onSkin) costalMarginPoints.push(onSkin);
     }
     const costalGeom = new THREE.BufferGeometry().setFromPoints(costalMarginPoints);
     const costalMat = new THREE.LineBasicMaterial({

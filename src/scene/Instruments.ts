@@ -3,16 +3,16 @@ import { TROCAR_PRESETS, TrocarDefinition } from '../config/presets';
 import { FulcrumKinematics, FulcrumState } from '../math/kinematics';
 import { AlignmentStatus } from '../math/alignmentEngine';
 import { AblationEllipsoid } from '../math/coverage';
-import { ULTRASOUND_SECTOR } from '../math/ultrasoundGeometry';
+import { LinearImageBounds } from '../math/ultrasoundGeometry';
+import { LUS_PROBE } from '../config/probe';
+import { guideDirection2D, ProbePose } from '../math/sideViewProbe';
 
-export interface ProbeUSPlaneData {
+/** The live image plane: origin at the array centre, x along the array, y into depth. */
+export interface ProbeUSPlaneData extends LinearImageBounds {
   origin: THREE.Vector3;
   normal: THREE.Vector3;
   xAxis: THREE.Vector3;
   yAxis: THREE.Vector3;
-  nearRadiusMm: number;
-  farRadiusMm: number;
-  sectorAngleDeg: number;
   sliceThicknessMm: number;
 }
 
@@ -27,7 +27,9 @@ export interface InstrumentSystem {
   getAblationEllipsoid(): AblationEllipsoid;
   getProbeUSPlaneData(): ProbeUSPlaneData;
   getNeedleSegment(): { entry: THREE.Vector3; tip: THREE.Vector3 };
-  updateProbe(trocarId: string, depth: number, tipPitch: number, tipYaw: number, roll: number): void;
+  updateProbe(pose: ProbePose): void;
+  getProbePose(): ProbePose | null;
+  setGuideExtension(from: THREE.Vector3 | null, to: THREE.Vector3 | null): void;
   updateNeedle(
     mode: 'trocar' | 'percutaneous',
     trocarId: string,
@@ -64,7 +66,7 @@ export class InstrumentBuilder {
     }
 
     // 2. Build LUS Probe
-    const { probeGroup, usSliceMesh, usGuideLine, getProbePlaneData, updateProbeKinematics } =
+    const { probeGroup, usSliceMesh, usGuideLine, getProbePlaneData, updateProbePose, setGuideExtension, getPose } =
       InstrumentBuilder.createLUSProbe();
     group.add(probeGroup);
 
@@ -86,7 +88,9 @@ export class InstrumentBuilder {
       getAblationEllipsoid,
       getProbeUSPlaneData: getProbePlaneData,
       getNeedleSegment: getNeedlePts,
-      updateProbe: updateProbeKinematics,
+      updateProbe: updateProbePose,
+      getProbePose: getPose,
+      setGuideExtension,
       updateNeedle: updateNeedleKinematics,
       setNeedleAlignmentVisuals: setAlignmentColor,
       setAblationPreview: (visible: boolean, dia: number) => {
@@ -149,187 +153,138 @@ export class InstrumentBuilder {
   }
 
   /**
-   * Create Laparoscopic Ultrasound (LUS) Probe with Articulating Tip & 1.5mm Sector Slice
+   * Side-viewing linear LUS probe: straight shaft from the trocar pivot to the flex
+   * joint, flexible tip to the array, array on the side of the tip, rectangular image
+   * in the plane that contains the array axis, and the needle-guide line.
+   * Everything is placed in world coordinates from a ProbePose, so the drawn probe
+   * and the planning math are the same object.
    */
   private static createLUSProbe() {
+    const spec = LUS_PROBE;
     const probeGroup = new THREE.Group();
     probeGroup.name = 'LUS_Probe';
 
-    // Rigid probe shaft (10mm dia, 320mm length)
-    const shaftGeom = new THREE.CylinderGeometry(5.0, 5.0, 300, 24);
-    shaftGeom.translate(0, 150, 0); // Origin at shaft base
-    const shaftMat = new THREE.MeshStandardMaterial({
-      color: 0x37474f,
-      metalness: 0.9,
-      roughness: 0.2
-    });
-    const shaftMesh = new THREE.Mesh(shaftGeom, shaftMat);
-    probeGroup.add(shaftMesh);
+    const metal = new THREE.MeshStandardMaterial({ color: 0x37474f, metalness: 0.9, roughness: 0.2 });
+    const flexMat = new THREE.MeshStandardMaterial({ color: 0x263238, metalness: 0.6, roughness: 0.4 });
+    const r = spec.shaftDiameterMm / 2;
 
-    // Articulating Head Joint Group
+    const shaftMesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 24), metal);
+    shaftMesh.name = 'LUS_Shaft';
+    const flexMesh = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.96, r * 0.96, 1, 16), flexMat);
+    flexMesh.name = 'LUS_FlexTip';
+    probeGroup.add(shaftMesh, flexMesh);
+
+    // Array head. Local X = array axis, local Y = -plane normal, local Z = beam.
     const headGroup = new THREE.Group();
-    headGroup.name = 'LUS_ArticulatingHead';
+    headGroup.name = 'LUS_ArrayHead';
     probeGroup.add(headGroup);
+    const housing = new THREE.Mesh(
+      new THREE.BoxGeometry(spec.arrayLengthMm + 6, spec.shaftDiameterMm * 0.9, spec.shaftDiameterMm * 0.8),
+      flexMat
+    );
+    housing.position.set(0, 0, -spec.shaftDiameterMm * 0.4);
+    const face = new THREE.Mesh(
+      new THREE.BoxGeometry(spec.arrayLengthMm, spec.shaftDiameterMm * 0.7, 0.8),
+      new THREE.MeshStandardMaterial({ color: 0x00d2ff, metalness: 0.3, roughness: 0.3 })
+    );
+    face.name = 'LUS_ArrayFace';
+    face.position.set(0, 0, -0.4);
+    headGroup.add(housing, face);
 
-    // Flexible knuckle joint segments (bellows / articulation links)
-    const jointGeom = new THREE.CylinderGeometry(4.8, 4.8, 18, 16);
-    jointGeom.translate(0, 9, 0);
-    const jointMat = new THREE.MeshStandardMaterial({
-      color: 0x263238,
-      metalness: 0.6,
-      roughness: 0.4
-    });
-    const jointMesh = new THREE.Mesh(jointGeom, jointMat);
-    headGroup.add(jointMesh);
-
-    // Acoustic Transducer Tip (Convex array probe)
-    const tipGeom = new THREE.BoxGeometry(10, 16, 8);
-    const tipMat = new THREE.MeshStandardMaterial({
-      color: 0x00d2ff,
-      metalness: 0.3,
-      roughness: 0.3
-    });
-    const tipMesh = new THREE.Mesh(tipGeom, tipMat);
-    tipMesh.position.set(0, 24, 0);
-    headGroup.add(tipMesh);
-
-    // 1.5mm Physical Thickness Ultrasound Scan Plane Mesh (Extruded Sector)
-    // Curvilinear / Convex scan sector: 75° angle, 100mm depth, 1.5mm thickness
-    const sectorShape = new THREE.Shape();
-    const sectorAngle = THREE.MathUtils.degToRad(ULTRASOUND_SECTOR.sectorAngleDeg);
-    const halfAngle = sectorAngle * 0.5;
-    const scanDepth = ULTRASOUND_SECTOR.farRadiusMm;
-    const nearRadius = ULTRASOUND_SECTOR.nearRadiusMm;
-
-    sectorShape.absarc(0, 0, nearRadius, Math.PI * 0.5 - halfAngle, Math.PI * 0.5 + halfAngle, false);
-    sectorShape.absarc(0, 0, scanDepth, Math.PI * 0.5 + halfAngle, Math.PI * 0.5 - halfAngle, true);
-    sectorShape.closePath();
-
-    const extrudeSettings: THREE.ExtrudeGeometryOptions = {
-      depth: ULTRASOUND_SECTOR.sliceThicknessMm,
-      bevelEnabled: false
-    };
-
-    const sliceGeom = new THREE.ExtrudeGeometry(sectorShape, extrudeSettings);
-    sliceGeom.computeBoundingBox();
-    const thicknessCenter = (
-      sliceGeom.boundingBox!.min.z + sliceGeom.boundingBox!.max.z
-    ) * 0.5;
-    sliceGeom.translate(0, 0, -thicknessCenter);
-    // Keep the scan plane at the transducer face; only the sector depth extends forward.
-    sliceGeom.rotateX(Math.PI * 0.5);
-    sliceGeom.translate(0, 24, 0);
-
-    const sliceMat = new THREE.MeshPhysicalMaterial({
-      color: 0x00ff88,
-      emissive: 0x004422,
-      emissiveIntensity: 0.25,
-      transparent: true,
-      opacity: 0.32,
-      roughness: 0.2,
-      transmission: 0.4,
-      depthWrite: false,
-      side: THREE.DoubleSide
-    });
-    const usSliceMesh = new THREE.Mesh(sliceGeom, sliceMat);
+    // Rectangular image slab: width = array length, depth near..far, 1.5 mm thick.
+    const depthSpan = spec.image.farDepthMm - spec.image.nearDepthMm;
+    const sliceGeom = new THREE.BoxGeometry(spec.arrayLengthMm, spec.image.sliceThicknessMm, depthSpan);
+    sliceGeom.translate(0, 0, spec.image.nearDepthMm + depthSpan / 2);
+    const usSliceMesh = new THREE.Mesh(sliceGeom, new THREE.MeshPhysicalMaterial({
+      color: 0x00ff88, emissive: 0x004422, emissiveIntensity: 0.25, transparent: true,
+      opacity: 0.32, roughness: 0.2, transmission: 0.4, depthWrite: false, side: THREE.DoubleSide
+    }));
     usSliceMesh.name = 'UltrasoundScanPlane';
     headGroup.add(usSliceMesh);
+    headGroup.add(new THREE.LineSegments(
+      new THREE.EdgesGeometry(sliceGeom),
+      new THREE.LineBasicMaterial({ color: 0x00ffaa, transparent: true, opacity: 0.5 })
+    ));
 
-    // Scan plane contour & depth tick lines
-    const wireGeom = new THREE.WireframeGeometry(sliceGeom);
-    const wireMat = new THREE.LineBasicMaterial({
-      color: 0x00ffaa,
-      transparent: true,
-      opacity: 0.4
-    });
-    const sliceWire = new THREE.LineSegments(wireGeom, wireMat);
-    headGroup.add(sliceWire);
+    // Needle guide: hole at the proximal end of the array, line across the image.
+    // Rebuilt on every pose update so an edited guide spec shows at once.
+    const usGuideLine = new THREE.Line(
+      new THREE.BufferGeometry(),
+      new THREE.LineDashedMaterial({ color: 0xffd400, dashSize: 4, gapSize: 2 })
+    );
+    usGuideLine.name = 'LUS_GuideLine';
+    const holeMarker = new THREE.Mesh(
+      new THREE.TorusGeometry(1.6, 0.5, 8, 16),
+      new THREE.MeshBasicMaterial({ color: 0xffd400 })
+    );
+    holeMarker.name = 'LUS_GuideHole';
+    headGroup.add(usGuideLine, holeMarker);
+    const refreshGuide = () => {
+      const { du, dv } = guideDirection2D(spec);
+      const hole = new THREE.Vector3(-spec.guide.holeOffsetMm, 0, -spec.guide.holeHeightMm);
+      const endT = (spec.image.farDepthMm + spec.guide.holeHeightMm) / Math.max(dv, 1e-6);
+      usGuideLine.geometry.setFromPoints([hole, hole.clone().add(new THREE.Vector3(du * endT, 0, dv * endT))]);
+      usGuideLine.computeLineDistances();
+      holeMarker.position.copy(hole);
+    };
+    refreshGuide();
 
-    // Virtual Needle Guide Line (projected dashed trajectory along scan sector)
-    const guidePts = [
-      new THREE.Vector3(0, 24, nearRadius),
-      new THREE.Vector3(0, 24, scanDepth)
-    ];
-    const guideGeom = new THREE.BufferGeometry().setFromPoints(guidePts);
-    const guideMat = new THREE.LineDashedMaterial({
-      color: 0x00ff66,
-      dashSize: 5,
-      gapSize: 3,
-      linewidth: 2
-    });
-    const usGuideLine = new THREE.Line(guideGeom, guideMat);
-    usGuideLine.computeLineDistances();
-    headGroup.add(usGuideLine);
+    // Guide line run back to the skin (world space, set by the planner).
+    const extensionGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    const guideExtension = new THREE.Line(extensionGeom, new THREE.LineDashedMaterial({
+      color: 0xffd400, dashSize: 3, gapSize: 3, transparent: true, opacity: 0.8
+    }));
+    guideExtension.name = 'LUS_GuideToSkin';
+    guideExtension.visible = false;
+    probeGroup.add(guideExtension);
 
-    // Plane tracking data
-    const getProbePlaneData = () => {
-      // Transducer face position in world coords
-      const origin = new THREE.Vector3();
-      tipMesh.getWorldPosition(origin);
+    let currentPose: ProbePose | null = null;
 
-      // Normal is perpendicular to slice face (Z axis in local head space)
-      const worldDirection = (localDirection: THREE.Vector3) => {
-        const start = usSliceMesh.localToWorld(new THREE.Vector3(0, 0, 0));
-        const end = usSliceMesh.localToWorld(localDirection.clone());
-        return end.sub(start).normalize();
-      };
+    const placeCylinder = (mesh: THREE.Mesh, from: THREE.Vector3, to: THREE.Vector3) => {
+      const dir = to.clone().sub(from);
+      const length = Math.max(dir.length(), 1e-3);
+      mesh.position.copy(from).addScaledVector(dir, 0.5);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+      mesh.scale.set(1, length, 1);
+    };
 
-      // ExtrudeGeometry is rotated into the mesh's local X/Z plane; its normal
-      // is -Y and its scan-depth axis is +Z after the geometry transform.
-      const normal = worldDirection(new THREE.Vector3(0, -1, 0));
-      const xAxis = worldDirection(new THREE.Vector3(1, 0, 0));
-      const yAxis = worldDirection(new THREE.Vector3(0, 0, 1));
+    const updateProbePose = (pose: ProbePose) => {
+      currentPose = pose;
+      placeCylinder(shaftMesh, pose.pivot, pose.joint);
+      placeCylinder(flexMesh, pose.joint, pose.arrayCenter);
+      const basis = new THREE.Matrix4().makeBasis(pose.arrayAxis, pose.planeNormal.clone().negate(), pose.beamDir);
+      headGroup.position.copy(pose.arrayCenter);
+      headGroup.quaternion.setFromRotationMatrix(basis);
+      refreshGuide();
+      headGroup.updateMatrixWorld(true);
+    };
 
+    const setGuideExtension = (from: THREE.Vector3 | null, to: THREE.Vector3 | null) => {
+      guideExtension.visible = !!from && !!to;
+      if (from && to) {
+        extensionGeom.setFromPoints([from, to]);
+        guideExtension.computeLineDistances();
+      }
+    };
+
+    const getProbePlaneData = (): ProbeUSPlaneData => {
+      if (!currentPose) throw new Error('Probe pose not set');
       return {
-        origin,
-        normal,
-        xAxis,
-        yAxis,
-        nearRadiusMm: ULTRASOUND_SECTOR.nearRadiusMm,
-        farRadiusMm: ULTRASOUND_SECTOR.farRadiusMm,
-        sectorAngleDeg: ULTRASOUND_SECTOR.sectorAngleDeg,
-        sliceThicknessMm: ULTRASOUND_SECTOR.sliceThicknessMm
+        kind: 'linear',
+        origin: currentPose.arrayCenter.clone(),
+        normal: currentPose.planeNormal.clone(),
+        xAxis: currentPose.arrayAxis.clone(),
+        yAxis: currentPose.beamDir.clone(),
+        halfWidthMm: spec.arrayLengthMm / 2,
+        nearDepthMm: spec.image.nearDepthMm,
+        farDepthMm: spec.image.farDepthMm,
+        sliceThicknessMm: spec.image.sliceThicknessMm
       };
     };
 
-    const updateProbeKinematics = (
-      trocarId: string,
-      depth: number,
-      tipPitch: number,
-      tipYaw: number,
-      roll: number
-    ) => {
-      const def = TROCAR_PRESETS[trocarId] || TROCAR_PRESETS['subcostal'];
-      const fulcrum = FulcrumKinematics.computeForward(
-        def.pivotPosition,
-        def.defaultDirection,
-        0, // Base shaft aligned with trocar
-        0,
-        roll,
-        depth,
-        320
-      );
+    const getPose = () => currentPose;
 
-      probeGroup.position.copy(fulcrum.pivot);
-      probeGroup.quaternion.copy(fulcrum.quaternion);
-      shaftMesh.scale.y = depth / 300;
-
-      // Move articulating head to distal end of insertion
-      headGroup.position.set(0, depth, 0);
-
-      // Articulation at tip (Pitch & Yaw of transducer head)
-      const qPitch = new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(1, 0, 0),
-        THREE.MathUtils.degToRad(tipPitch)
-      );
-      const qYaw = new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(0, 0, 1),
-        THREE.MathUtils.degToRad(tipYaw)
-      );
-      headGroup.quaternion.copy(qPitch).multiply(qYaw);
-    };
-
-    return { probeGroup, usSliceMesh, usGuideLine, getProbePlaneData, updateProbeKinematics };
+    return { probeGroup, usSliceMesh, usGuideLine, getProbePlaneData, updateProbePose, setGuideExtension, getPose };
   }
 
   /**

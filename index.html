@@ -293,6 +293,7 @@
                 <option value="subcostal">右肋下 (Right subcostal)</option>
                 <option value="subxiphoid">劍突下 (Subxiphoid)</option>
                 <option value="itt">肋間經胸 ITT</option>
+                <option value="custom">皮膚點選位置 (Custom)</option>
               </select>
             </label>
             <label class="space-y-1">
@@ -321,6 +322,60 @@
           </div>
         </div>
 
+        <!-- SECTION 2b: SKIN PORT PLANNING -->
+        <div class="space-y-2.5 p-3 rounded-lg bg-slate-900/60 border border-amber-900/60">
+          <div class="flex items-center justify-between text-slate-300 font-bold border-b border-slate-800 pb-1.5">
+            <span class="flex items-center space-x-1.5">
+              <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+              <span>布孔規劃 (Skin Port Planning)</span>
+            </span>
+            <span id="planner-calibration-badge" class="text-[9px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300">探頭規格未校正</span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 text-[10px]">
+            <label class="space-y-1">
+              <span class="block text-slate-300 font-bold">點皮膚設定</span>
+              <select id="planner-click-mode" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100">
+                <option value="off">不設定（可旋轉畫面）</option>
+                <option value="probe">探頭套管位置</option>
+                <option value="needle">徒手進針點</option>
+              </select>
+            </label>
+            <label class="space-y-1">
+              <span class="block text-slate-300 font-bold">進針方式</span>
+              <select id="planner-needle-mode" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100">
+                <option value="guided">經探頭導引孔</option>
+                <option value="freehand">徒手平面內</option>
+              </select>
+            </label>
+            <label class="space-y-1">
+              <span class="block text-slate-300 font-bold">導引角度 (°)</span>
+              <input id="planner-guide-angle" type="number" min="5" max="85" step="1" value="30" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100">
+            </label>
+            <label class="space-y-1">
+              <span class="block text-slate-300 font-bold">角度量自</span>
+              <select id="planner-guide-ref" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100">
+                <option value="array-axis">探頭長軸</option>
+                <option value="beam-axis">聲束方向</option>
+              </select>
+            </label>
+          </div>
+          <div class="text-[9px] text-slate-400">導引孔在陣列後端；導引線在影像內可達深度：<span id="planner-guide-depth" class="text-amber-300 font-bold">—</span></div>
+
+          <label class="flex items-center space-x-2 text-[10px] text-slate-300">
+            <input type="checkbox" id="toggle-skin-map" class="rounded border-slate-700 bg-slate-950">
+            <span>在皮膚上顯示可行區（綠＝探頭孔、藍＝徒手進針、青＝兩者）</span>
+          </label>
+
+          <div class="grid grid-cols-2 gap-2">
+            <button id="btn-planner-pose-probe" type="button" class="rounded border border-emerald-700 bg-emerald-950/60 px-2 py-1.5 text-[10px] font-bold text-emerald-200 hover:bg-emerald-900">探頭擺到可行聲窗</button>
+            <button id="btn-planner-apply-guided" type="button" class="rounded border border-amber-700 bg-amber-950/60 px-2 py-1.5 text-[10px] font-bold text-amber-200 hover:bg-amber-900">套用導引孔進針</button>
+          </div>
+
+          <div id="planner-report" class="text-[10px] leading-relaxed text-slate-300 bg-slate-950/60 p-2 rounded border border-slate-800">選擇「點皮膚設定」後在 3D 畫面的皮膚上點一下。</div>
+          <div class="text-[9px] text-slate-500">只判斷「可不可以、為什麼」，不排名、不推薦。幾何為示意解剖，未依病人影像。</div>
+        </div>
+
         <!-- SECTION 3: LUS PROBE ARTICULATION CONTROLS -->
         <div class="space-y-2.5 p-3 rounded-lg bg-slate-900/60 border border-slate-800">
           <div class="flex items-center justify-between text-slate-300 font-bold border-b border-slate-800 pb-1.5">
@@ -331,40 +386,54 @@
             <span class="text-[10px] text-emerald-400">Articulating Tip</span>
           </div>
 
-          <!-- Probe Insertion Depth -->
+          <div class="text-[9px] text-slate-400">側視線陣：影像面含探頭長軸，聲束垂直於陣列面。桿身以套管為支點轉動，尖端四向彎曲。</div>
+
           <div class="space-y-1">
             <div class="flex justify-between text-[11px]">
-              <span class="text-slate-400">探頭穿刺深度 (Depth):</span>
-              <span id="val-probe-depth" class="font-bold text-slate-200">125 mm</span>
+              <span class="text-slate-400">桿身插入長度 (Insertion):</span>
+              <span id="val-probe-depth" class="font-bold text-slate-200">110 mm</span>
             </div>
-            <input type="range" id="input-probe-depth" min="50" max="220" step="1" value="125" class="w-full">
+            <input type="range" id="input-probe-depth" min="20" max="300" step="1" value="110" class="w-full">
           </div>
 
-          <!-- Probe Articulating Tip Pitch -->
           <div class="space-y-1">
             <div class="flex justify-between text-[11px]">
-              <span class="text-slate-400">頭端俯仰角 (Tip Pitch):</span>
-              <span id="val-probe-pitch" class="font-bold text-emerald-400">25.0°</span>
+              <span class="text-slate-400">桿身俯仰 (Shaft pitch):</span>
+              <span id="val-probe-pitch" class="font-bold text-emerald-400">0°</span>
             </div>
-            <input type="range" id="input-probe-pitch" min="-60" max="60" step="1" value="25" class="w-full">
+            <input type="range" id="input-probe-pitch" min="-60" max="60" step="1" value="0" class="w-full">
           </div>
 
-          <!-- Probe Articulating Tip Yaw -->
           <div class="space-y-1">
             <div class="flex justify-between text-[11px]">
-              <span class="text-slate-400">頭端偏擺角 (Tip Yaw):</span>
-              <span id="val-probe-yaw" class="font-bold text-emerald-400">10.0°</span>
+              <span class="text-slate-400">桿身偏擺 (Shaft yaw):</span>
+              <span id="val-probe-yaw" class="font-bold text-emerald-400">0°</span>
             </div>
-            <input type="range" id="input-probe-yaw" min="-60" max="60" step="1" value="10" class="w-full">
+            <input type="range" id="input-probe-yaw" min="-60" max="60" step="1" value="0" class="w-full">
           </div>
 
-          <!-- Probe Shaft Roll -->
           <div class="space-y-1">
             <div class="flex justify-between text-[11px]">
-              <span class="text-slate-400">桿身自轉角 (Shaft Roll):</span>
-              <span id="val-probe-roll" class="font-bold text-emerald-400">0.0°</span>
+              <span class="text-slate-400">桿身自轉 (Roll):</span>
+              <span id="val-probe-roll" class="font-bold text-emerald-400">0°</span>
             </div>
             <input type="range" id="input-probe-roll" min="-180" max="180" step="2" value="0" class="w-full">
+          </div>
+
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">尖端上下彎 (Flex up/down):</span>
+              <span id="val-probe-flexud" class="font-bold text-emerald-400">30°</span>
+            </div>
+            <input type="range" id="input-probe-flexud" min="-90" max="90" step="1" value="30" class="w-full">
+          </div>
+
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">尖端左右彎 (Flex left/right):</span>
+              <span id="val-probe-flexlr" class="font-bold text-emerald-400">0°</span>
+            </div>
+            <input type="range" id="input-probe-flexlr" min="-90" max="90" step="1" value="0" class="w-full">
           </div>
         </div>
 
