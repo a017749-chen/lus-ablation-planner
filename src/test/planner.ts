@@ -4,16 +4,23 @@ import { LUS_PROBE, LusProbeSpec } from '../config/probe';
 import {
   costalMarginPoint,
   isOverRibCage,
+  liverNormal,
   liverValue,
   raySkinIntersection,
   sampleLiverSurface,
   segmentCrossesLiver
 } from '../math/anatomyShapes';
 import {
+  blindIntrahepaticMm,
   checkNeedlePath,
   evaluateFreehandEntry,
   evaluateProbePort,
   findAcousticWindows,
+  FREEHAND_LIMITS,
+  IN_PLANE_TOLERANCE_DEG,
+  needleProbeGapMm,
+  segmentDistance,
+  solveFreehandNeedle,
   solveGuidedNeedle
 } from '../math/portPlanner';
 import {
@@ -182,6 +189,56 @@ test('needle path checks: length, vessel clearance and tilt fail independently',
   assert(!r.reasons.includes('needle-tilt'), 'a needle straight down is not tilted');
   const free = evaluateFreehandEntry(straight, S5);
   assert(free.needleBeamAngleDeg !== undefined || free.reasons.length > 0, 'result explains itself');
+});
+
+test('segment distance: crossing, parallel, skew and end-to-end cases', () => {
+  const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+  near(segmentDistance(v(-1, 0, 0), v(1, 0, 0), v(0, -1, 0), v(0, 1, 0)), 0, 1e-12, 'crossing');
+  near(segmentDistance(v(0, 0, 0), v(10, 0, 0), v(0, 3, 0), v(10, 3, 0)), 3, 1e-12, 'parallel');
+  near(segmentDistance(v(-1, 0, 0), v(1, 0, 0), v(0, -1, 4), v(0, 1, 4)), 4, 1e-12, 'skew');
+  near(segmentDistance(v(0, 0, 0), v(1, 0, 0), v(4, 0, 0), v(6, 0, 0)), 3, 1e-12, 'collinear gap');
+});
+
+const S7 = LESION_PRESETS['S7_S8'].tumorPosition;
+const S2 = LESION_PRESETS['S2_S3'].tumorPosition;
+
+test('every freehand entry keeps the needle in plane, visible, clear of the probe and on target', () => {
+  for (const [target, port] of [[S5, SUBCOSTAL], [S2, TROCAR_PRESETS.subxiphoid], [S7, TROCAR_PRESETS.itt]] as const) {
+    const plan = solveFreehandNeedle(port.pivotPosition, target, 20);
+    assert(plan.feasible, 'each preset has freehand entries from its port');
+    for (const e of plan.entries) {
+      const pose = e.probe.pose;
+      // The whole needle lies in the image plane, not just its direction.
+      near(toImage(pose, e.skin).w, 0, 1e-6, 'skin entry in the image plane');
+      near(toImage(pose, target).w, 0, 1e-6, 'target in the image plane');
+      const rock = THREE.MathUtils.radToDeg(pose.beamDir.angleTo(liverNormal(e.probe.window.point).negate()));
+      assert(rock <= IN_PLANE_TOLERANCE_DEG + 1e-6, `probe rock ${rock.toFixed(2)} deg`);
+      const g = toImage(pose, target);
+      assert(isInLinearImage(g.u, g.v), 'target in the image');
+      assert(needleProbeGapMm(pose, e.skin, target) >= FREEHAND_LIMITS.probeClearanceMm, 'clear of the probe');
+      // Recompute the blind length more finely than the planner did.
+      assert(blindIntrahepaticMm(pose, e.skin, target, LUS_PROBE, 0.25) <= FREEHAND_LIMITS.maxBlindMm + 1, 'visible in liver');
+      assert(e.probe.needleBeamAngleDeg >= FREEHAND_LIMITS.minNeedleBeamDeg, 'not along the beam');
+      assert(e.needle.feasible && pose.flexDeg <= LUS_PROBE.maxFlexDeg, 'needle and probe limits');
+    }
+  }
+});
+
+test('S7/S8: the guide cannot reach it, a freehand in-plane needle can, below the costal margin', () => {
+  assert(solveGuidedNeedle(SUBCOSTAL.pivotPosition, S7).reasons[0] === 'guide-too-deep', 'guide refuses');
+  const plan = solveFreehandNeedle(SUBCOSTAL.pivotPosition, S7);
+  const clean = plan.entries.filter(e => !e.warnings.length);
+  assert(clean.length > 0, 'some freehand entries are not over the rib cage');
+  assert(plan.shortest && !plan.shortest.warnings.length, 'the posed entry avoids warnings when it can');
+  assert(toImage(plan.shortest.probe.pose, S7).v > 40, 'deeper than the guide line reaches');
+});
+
+test('a needle aimed through the array is refused as hitting the probe; one beside it is not', () => {
+  const plan = solveFreehandNeedle(SUBCOSTAL.pivotPosition, S5);
+  const pose = plan.shortest!.probe.pose;
+  const through = raySkinIntersection(S5, pose.arrayCenter.clone().sub(S5))!;
+  assert(needleProbeGapMm(pose, through, S5) < 0, 'straight through the array face');
+  assert(needleProbeGapMm(pose, plan.shortest!.skin, S5) >= FREEHAND_LIMITS.probeClearanceMm, 'planned entry clears it');
 });
 
 let failed = 0;

@@ -25,10 +25,12 @@ import { LUS_PROBE } from './config/probe';
 import { forwardProbe, guideLine, guideVisibleDepth, inverseProbe, ProbeControls } from './math/sideViewProbe';
 import {
   buildSkinMap,
-  evaluateFreehandEntry,
+  evaluateFreehandPlan,
   evaluateProbePort,
+  FREEHAND_LIMITS,
+  FreehandPlanEntry,
   REASON_TEXT,
-  poseProbeForNeedle,
+  solveFreehandNeedle,
   solveGuidedNeedle
 } from './math/portPlanner';
 import { raySkinIntersection } from './math/anatomyShapes';
@@ -76,6 +78,8 @@ class SurgicalPlannerApp {
   private plannerNeedleMode: 'guided' | 'freehand' = 'guided';
   private skinMapVisible = false;
   private skinMapGroup = new THREE.Group();
+  private freehandEntriesGroup = new THREE.Group();
+  private freehandEntries: FreehandPlanEntry[] = [];
 
   // Needle Kinematics
   private needleDepth: number = 85;
@@ -205,6 +209,7 @@ class SurgicalPlannerApp {
     this.percutaneousNormal.set(0, 0, -1);
 
     this.customProbePort = null;
+    this.clearFreehandEntries();
     this.poseProbeByPlanner(true);
 
     // Sync input sliders
@@ -608,6 +613,89 @@ class SurgicalPlannerApp {
     );
   }
 
+  /** Report lines shared by the planned and the clicked freehand entry. */
+  private freehandDetails(e: FreehandPlanEntry): string {
+    return `皮膚穿刺點 ${this.fmt(e.skin)}，針長 ${e.needle.lengthMm.toFixed(0)} mm，` +
+      `距血管 ${e.needle.vesselClearanceMm.toFixed(1)} mm（${e.needle.closestVessel}）<br>` +
+      `針與聲束夾角 ${e.probe.needleBeamAngleDeg.toFixed(0)}°；肝內針道在影像外 ${e.probe.blindMm.toFixed(0)} mm；` +
+      `針離探頭 ${e.probe.probeGapMm.toFixed(0)} mm<br>` +
+      `探頭：插入 ${e.probe.pose.insertionMm.toFixed(0)} mm、尖端彎 ${e.probe.pose.flexDeg.toFixed(0)}°，影像面已轉到包含針道`;
+  }
+
+  /** Put the probe and a percutaneous needle on one freehand in-plane entry. */
+  private applyFreehandEntry(e: FreehandPlanEntry) {
+    const port = this.probePort();
+    this.setProbeControls(inverseProbe(e.probe.pose, port.direction));
+    this.setPercutaneousNeedle(e.skin, this.activePreset.tumorPosition);
+  }
+
+  /** Every skin point from which a freehand in-plane needle works with the current probe port. */
+  private applyFreehandPlan() {
+    const plan = solveFreehandNeedle(this.probePort().pivot, this.activePreset.tumorPosition);
+    this.drawFreehandEntries(plan.entries, plan.shortest);
+    const limits = `<span class="text-slate-500">條件（未校正）：針與聲束夾角 ≥ ${FREEHAND_LIMITS.minNeedleBeamDeg}°、` +
+      `肝內針道在影像外 ≤ ${FREEHAND_LIMITS.maxBlindMm} mm、針離探頭 ≥ ${FREEHAND_LIMITS.probeClearanceMm} mm。</span>`;
+    if (!plan.feasible || !plan.shortest) {
+      this.plannerReport(`<b class="text-rose-300">從這個探頭孔找不到徒手平面內進針點</b>（檢查 ${plan.checkedCount} 個皮膚點）` +
+        this.reasonList(plan.reasons) + `<div class="mt-1">${limits}</div>`);
+      return;
+    }
+    const clean = plan.entries.filter(e => !e.warnings.length).length;
+    const e = plan.shortest;
+    this.applyFreehandEntry(e);
+    this.plannerReport(
+      `<b class="text-emerald-300">✔ 可徒手平面內進針</b>：${plan.entries.length} 個皮膚點可行` +
+      `（其中 ${clean} 個不在肋骨區），皮膚上以藍點標示<br>` +
+      this.freehandDetails(e) + '<br>' +
+      `<span class="text-slate-500">顯示的是針最短的一點（優先選沒有警示的），只是幾何選法；` +
+      `把「點皮膚設定」切到「徒手進針點」後點其他藍點可改用。</span><br>` + limits +
+      this.reasonList([], e.warnings)
+    );
+  }
+
+  private clearFreehandEntries() {
+    this.freehandEntriesGroup.clear();
+    this.freehandEntries = [];
+  }
+
+  /** A planned entry (blue dot) within `radiusMm` of a clicked skin point, if any. */
+  private nearestFreehandEntry(skin: THREE.Vector3, radiusMm = 7): FreehandPlanEntry | undefined {
+    let best: FreehandPlanEntry | undefined;
+    for (const e of this.freehandEntries) {
+      const d = e.skin.distanceTo(skin);
+      if (d <= radiusMm && (!best || d < best.skin.distanceTo(skin))) best = e;
+    }
+    return best;
+  }
+
+  private drawFreehandEntries(entries: FreehandPlanEntry[], chosen?: FreehandPlanEntry) {
+    this.clearFreehandEntries();
+    this.freehandEntries = entries;
+    if (!entries.length) return;
+    const positions: number[] = [];
+    for (const e of entries) {
+      const n = getAnteriorSkinSurfaceNormal(e.skin.x, e.skin.y)!;
+      const p = e.skin.clone().addScaledVector(n, 3);
+      positions.push(p.x, p.y, p.z);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const dots = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 7, color: 0x60a5fa, sizeAttenuation: true }));
+    dots.name = 'FreehandEntries';
+    this.freehandEntriesGroup.add(dots);
+    if (chosen) {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(6, 1.2, 8, 24),
+        new THREE.MeshBasicMaterial({ color: 0xfacc15 })
+      );
+      const n = getAnteriorSkinSurfaceNormal(chosen.skin.x, chosen.skin.y)!;
+      ring.position.copy(chosen.skin).addScaledVector(n, 3);
+      ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+      ring.name = 'FreehandChosenEntry';
+      this.freehandEntriesGroup.add(ring);
+    }
+  }
+
   private onSkinPicked(hit: THREE.Vector3) {
     const skin = getAnteriorSkinSurfacePoint(hit.x, hit.y);
     const normal = getAnteriorSkinSurfaceNormal(hit.x, hit.y);
@@ -617,6 +705,8 @@ class SurgicalPlannerApp {
     if (this.plannerClickMode === 'probe') {
       this.customProbePort = { pivot: skin, direction: normal.clone().negate() };
       this.syncTrocarSelectionUI();
+      this.clearFreehandEntries();
+      this.refreshSkinMap();
       const ok = this.poseProbeByPlanner(false);
       if (ok && this.plannerNeedleMode === 'guided') {
         const guided = solveGuidedNeedle(skin, target);
@@ -624,28 +714,31 @@ class SurgicalPlannerApp {
         if (el) el.innerHTML += guided.feasible
           ? `<div class="mt-1 text-amber-200">導引孔進針：可行（${guided.solutions.length} 組）。按「套用導引孔進針」。</div>`
           : `<div class="mt-1 text-amber-200">導引孔進針：不可行${this.reasonList(guided.reasons)}</div>`;
+      } else if (ok) {
+        const plan = solveFreehandNeedle(skin, target);
+        this.drawFreehandEntries(plan.entries);
+        const el = document.getElementById('planner-report');
+        if (el) el.innerHTML += plan.feasible
+          ? `<div class="mt-1 text-sky-200">徒手平面內進針：${plan.entries.length} 個皮膚點可行（藍點）。按「規劃徒手平面內進針」或點藍點。</div>`
+          : `<div class="mt-1 text-sky-200">徒手平面內進針：不可行${this.reasonList(plan.reasons)}</div>`;
       }
     } else if (this.plannerClickMode === 'needle') {
-      const result = evaluateFreehandEntry(skin, target);
-      this.setPercutaneousNeedle(skin, target);
-      let probeLine = '';
-      if (result.feasible) {
-        const aligned = poseProbeForNeedle(this.probePort().pivot, skin, target);
-        if (aligned.solution) {
-          this.setProbeControls(inverseProbe(aligned.solution.pose, this.probePort().direction));
-          probeLine = `<br>探頭已轉到讓影像面包含這條針道（尖端彎 ${aligned.solution.pose.flexDeg.toFixed(0)}°）。`;
-        } else {
-          probeLine = `<div class="text-amber-200">目前的探頭孔無法讓影像面包含這條針道${this.reasonList(aligned.reasons)}</div>`;
-        }
+      // A click on a blue dot takes that planned entry, so borderline dots do not flip.
+      const planned = this.nearestFreehandEntry(skin);
+      const result = planned
+        ? { entry: planned, needle: planned.needle, reasons: [] }
+        : evaluateFreehandPlan(this.probePort().pivot, skin, target);
+      if (result.entry) {
+        this.applyFreehandEntry(result.entry);
+        this.plannerReport(`<b class="text-emerald-300">✔ 這個徒手進針點可行</b>${planned ? '（藍點）' : ''}<br>` +
+          this.freehandDetails(result.entry) + this.reasonList([], result.entry.warnings));
+      } else {
+        this.setPercutaneousNeedle(skin, target);
+        this.plannerReport(`<b class="text-rose-300">這個徒手進針點不可行</b><br>` +
+          `皮膚點 ${this.fmt(skin)}，針長 ${result.needle.lengthMm.toFixed(0)} mm，` +
+          `距血管 ${result.needle.vesselClearanceMm.toFixed(1)} mm` +
+          this.reasonList(result.reasons, result.needle.warnings));
       }
-      this.plannerReport(
-        (result.feasible
-          ? `<b class="text-emerald-300">✔ 這個進針點可行</b><br>`
-          : `<b class="text-rose-300">這個進針點不可行</b><br>`) +
-        `皮膚點 ${this.fmt(skin)}，針長 ${result.lengthMm.toFixed(0)} mm，距血管 ${result.vesselClearanceMm.toFixed(1)} mm` +
-        (result.needleBeamAngleDeg !== undefined ? `，針與聲束夾角 ${result.needleBeamAngleDeg.toFixed(0)}°` : '') +
-        probeLine + this.reasonList(result.reasons, result.warnings)
-      );
     }
     this.syncSlidersToState();
     this.updateKinematicsAndMath();
@@ -655,7 +748,7 @@ class SurgicalPlannerApp {
   private refreshSkinMap() {
     this.skinMapGroup.clear();
     if (!this.skinMapVisible) return;
-    const cells = buildSkinMap(this.activePreset.tumorPosition, 10);
+    const cells = buildSkinMap(this.activePreset.tumorPosition, 10, LUS_PROBE, this.probePort().pivot);
     const positions: number[] = [];
     const colors: number[] = [];
     const color = new THREE.Color();
@@ -678,6 +771,11 @@ class SurgicalPlannerApp {
     this.skinMapGroup.add(points);
   }
 
+  private syncPlannerApplyLabel() {
+    const button = document.getElementById('btn-planner-apply-needle');
+    if (button) button.textContent = this.plannerNeedleMode === 'freehand' ? '規劃徒手平面內進針' : '套用導引孔進針';
+  }
+
   private updateGuideDepthLabel() {
     const label = document.getElementById('planner-guide-depth');
     const depth = guideVisibleDepth();
@@ -688,6 +786,7 @@ class SurgicalPlannerApp {
 
   private bindPlannerEvents() {
     this.scene.add(this.skinMapGroup);
+    this.scene.add(this.freehandEntriesGroup);
     this.updateGuideDepthLabel();
 
     document.getElementById('planner-click-mode')?.addEventListener('change', (e) => {
@@ -698,6 +797,7 @@ class SurgicalPlannerApp {
     });
     document.getElementById('planner-needle-mode')?.addEventListener('change', (e) => {
       this.plannerNeedleMode = (e.target as HTMLSelectElement).value as typeof this.plannerNeedleMode;
+      this.syncPlannerApplyLabel();
     });
     document.getElementById('planner-guide-angle')?.addEventListener('change', (e) => {
       const value = Number((e.target as HTMLInputElement).value);
@@ -719,8 +819,9 @@ class SurgicalPlannerApp {
       this.syncSlidersToState();
       this.updateKinematicsAndMath();
     });
-    document.getElementById('btn-planner-apply-guided')?.addEventListener('click', () => {
-      this.applyGuidedPlan();
+    document.getElementById('btn-planner-apply-needle')?.addEventListener('click', () => {
+      if (this.plannerNeedleMode === 'freehand') this.applyFreehandPlan();
+      else this.applyGuidedPlan();
       this.syncSlidersToState();
       this.updateKinematicsAndMath();
     });
@@ -1052,6 +1153,8 @@ class SurgicalPlannerApp {
       if (!isProbePort(port)) return;
       this.customProbePort = null;
       this.portSelection = selectProbePort(this.portSelection, port);
+      this.clearFreehandEntries();
+      this.refreshSkinMap();
       this.poseProbeByPlanner(false);
       this.syncSlidersToState();
       this.syncTrocarSelectionUI();
