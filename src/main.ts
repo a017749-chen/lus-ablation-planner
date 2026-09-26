@@ -59,6 +59,10 @@ class SurgicalPlannerApp {
   private needlePitch: number = 42;
   private needleYaw: number = -15;
 
+  // Dynamic Needle Insertion Simulation
+  private isInsertingAnimation: boolean = false;
+  private lastAnimTimestamp: number = 0;
+
   // Tumor & Margin
   private tumorDiameter: number = 20;
   private safetyMargin: number = 5.0;
@@ -377,6 +381,60 @@ class SurgicalPlannerApp {
   }
 
   /**
+   * Calculate distance from active needle entry point to tumor target center
+   */
+  public getTargetNeedleDepth(): number {
+    const pivot = this.needleMode === 'trocar'
+      ? (TROCAR_PRESETS[this.needleTrocarId]?.pivotPosition || new THREE.Vector3(0, -90, 85))
+      : this.percutaneousPivot;
+    return pivot.distanceTo(this.activePreset.tumorPosition);
+  }
+
+  /**
+   * Toggle dynamic needle insertion animation
+   */
+  public toggleInsertionAnimation() {
+    if (this.isInsertingAnimation) {
+      this.stopInsertionAnimation();
+    } else {
+      const targetDepth = this.getTargetNeedleDepth();
+      if (this.needleDepth >= targetDepth - 0.5) {
+        this.needleDepth = 0;
+        this.syncSlidersToState();
+        this.updateKinematicsAndMath();
+      }
+      this.isInsertingAnimation = true;
+      this.updateInsertionPlayButtonUI();
+    }
+  }
+
+  public stopInsertionAnimation() {
+    this.isInsertingAnimation = false;
+    this.updateInsertionPlayButtonUI();
+  }
+
+  private updateInsertionPlayButtonUI() {
+    const btn = document.getElementById('btn-play-puncture');
+    const text = document.getElementById('text-play-puncture');
+    const icon = document.getElementById('icon-play-puncture');
+    if (btn && text) {
+      if (this.isInsertingAnimation) {
+        btn.className = 'py-1 px-1 rounded bg-amber-500 hover:bg-amber-400 text-black font-bold font-mono transition-all text-center flex items-center justify-center space-x-1 animate-pulse';
+        text.textContent = '暫停進針';
+        if (icon) {
+          icon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+        }
+      } else {
+        btn.className = 'py-1 px-1 rounded bg-emerald-600 hover:bg-emerald-500 text-black font-bold font-mono transition-all text-center flex items-center justify-center space-x-1';
+        text.textContent = '動態進針';
+        if (icon) {
+          icon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+        }
+      }
+    }
+  }
+
+  /**
    * Main mathematical update cycle
    */
   private updateKinematicsAndMath() {
@@ -389,6 +447,9 @@ class SurgicalPlannerApp {
 
     // 1. Update Tumor & Safety Margin geometry
     this.anatomy.updateTumor(this.activePreset.tumorPosition, this.tumorDiameter, this.safetyMargin);
+
+    // 1b. Update Percutaneous Entry Marker on Skin
+    this.anatomy.updatePercutaneousIncision(this.percutaneousPivot);
 
     // 2. Update LUS Probe kinematics
     this.instruments.updateProbe(
@@ -434,6 +495,23 @@ class SurgicalPlannerApp {
       this.activePreset.tumorPosition,
       this.needleMode === 'percutaneous' ? this.percutaneousPivot : undefined
     );
+
+    // 4c. Update Needle Target Distance Indicator
+    const targetDepth = this.getTargetNeedleDepth();
+    const distRemaining = targetDepth - this.needleDepth;
+    const labelDist = document.getElementById('label-puncture-target-dist');
+    if (labelDist) {
+      if (Math.abs(distRemaining) <= 1.0) {
+        labelDist.textContent = '0.0 mm (已抵達靶心)';
+        labelDist.className = 'text-emerald-400 font-bold';
+      } else if (distRemaining > 1.0) {
+        labelDist.textContent = `+${distRemaining.toFixed(1)} mm (逼近中)`;
+        labelDist.className = 'text-cyan-300 font-bold';
+      } else {
+        labelDist.textContent = `${distRemaining.toFixed(1)} mm (穿透靶心)`;
+        labelDist.className = 'text-rose-400 font-bold';
+      }
+    }
 
     // 5. Collision Detection with Critical Vessels
     this.latestCollision = CollisionDetector.checkCollision(
@@ -590,6 +668,30 @@ class SurgicalPlannerApp {
     document.getElementById('btn-cam-reset')?.addEventListener('click', () => this.viewports.setCameraPreset('reset'));
 
     // Layer toggles
+    document.getElementById('layer-skin')?.addEventListener('change', (e) => {
+      const isChecked = (e.target as HTMLInputElement).checked;
+      this.anatomy.skinDome.visible = isChecked;
+      this.anatomy.skinIncisionMarkers.visible = isChecked;
+    });
+
+    const inputSkinOpacity = document.getElementById('input-skin-opacity') as HTMLInputElement | null;
+    const valSkinOpacity = document.getElementById('val-skin-opacity');
+    inputSkinOpacity?.addEventListener('input', (e) => {
+      const opacityVal = Number((e.target as HTMLInputElement).value);
+      if (valSkinOpacity) valSkinOpacity.textContent = `${opacityVal}%`;
+      this.anatomy.setSkinOpacity(opacityVal / 100);
+    });
+    document.getElementById('btn-skin-translucent')?.addEventListener('click', () => {
+      if (inputSkinOpacity) inputSkinOpacity.value = '25';
+      if (valSkinOpacity) valSkinOpacity.textContent = '25%';
+      this.anatomy.setSkinOpacity(0.25);
+    });
+    document.getElementById('btn-skin-opaque')?.addEventListener('click', () => {
+      if (inputSkinOpacity) inputSkinOpacity.value = '88';
+      if (valSkinOpacity) valSkinOpacity.textContent = '88%';
+      this.anatomy.setSkinOpacity(0.88);
+    });
+
     document.getElementById('layer-dome')?.addEventListener('change', (e) => {
       this.anatomy.abdominalDome.visible = (e.target as HTMLInputElement).checked;
     });
@@ -684,8 +786,36 @@ class SurgicalPlannerApp {
 
     const inputNeedleDepth = document.getElementById('input-needle-depth') as HTMLInputElement;
     inputNeedleDepth?.addEventListener('input', (e) => {
+      this.stopInsertionAnimation();
       this.needleDepth = Number((e.target as HTMLInputElement).value);
       document.getElementById('val-needle-depth')!.textContent = `${this.needleDepth.toFixed(1)} mm`;
+      this.updateKinematicsAndMath();
+    });
+
+    // Needle Insertion Simulation Controls
+    document.getElementById('btn-play-puncture')?.addEventListener('click', () => this.toggleInsertionAnimation());
+    document.getElementById('btn-needle-retract-5')?.addEventListener('click', () => {
+      this.stopInsertionAnimation();
+      this.needleDepth = Math.max(0, this.needleDepth - 5);
+      this.syncSlidersToState();
+      this.updateKinematicsAndMath();
+    });
+    document.getElementById('btn-needle-advance-5')?.addEventListener('click', () => {
+      this.stopInsertionAnimation();
+      this.needleDepth = Math.min(160, this.needleDepth + 5);
+      this.syncSlidersToState();
+      this.updateKinematicsAndMath();
+    });
+    document.getElementById('btn-needle-reset-skin')?.addEventListener('click', () => {
+      this.stopInsertionAnimation();
+      this.needleDepth = 0;
+      this.syncSlidersToState();
+      this.updateKinematicsAndMath();
+    });
+    document.getElementById('btn-needle-target-depth')?.addEventListener('click', () => {
+      this.stopInsertionAnimation();
+      this.needleDepth = this.getTargetNeedleDepth();
+      this.syncSlidersToState();
       this.updateKinematicsAndMath();
     });
 
@@ -727,8 +857,30 @@ class SurgicalPlannerApp {
   /**
    * Main Animation & Render loop
    */
-  private animate = () => {
+  private animate = (timestamp: number = 0) => {
     requestAnimationFrame(this.animate);
+
+    // Dynamic Needle Insertion Animation Advance
+    if (this.isInsertingAnimation) {
+      if (!this.lastAnimTimestamp) this.lastAnimTimestamp = timestamp;
+      const dt = Math.min(0.05, (timestamp - this.lastAnimTimestamp) / 1000);
+      this.lastAnimTimestamp = timestamp;
+
+      const speedMmPerSec = 16.0; // ~16 mm/s realistic clinical puncture velocity
+      const targetDepth = this.getTargetNeedleDepth();
+      if (this.needleDepth < targetDepth) {
+        this.needleDepth = Math.min(targetDepth, this.needleDepth + speedMmPerSec * dt);
+        this.syncSlidersToState();
+        this.updateKinematicsAndMath();
+        if (this.needleDepth >= targetDepth) {
+          this.stopInsertionAnimation();
+        }
+      } else {
+        this.stopInsertionAnimation();
+      }
+    } else {
+      this.lastAnimTimestamp = timestamp;
+    }
 
     // Render 3D Three.js viewports (Main + Laparoscope)
     this.viewports.render(this.scene);

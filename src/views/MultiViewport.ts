@@ -55,6 +55,7 @@ export class MultiViewport {
     const lapCamera = new THREE.PerspectiveCamera(70, lapWidth / lapHeight, 1, 600); // 70° wide-angle laparoscope
     const umbilical = TROCAR_PRESETS['umbilical'];
     lapCamera.position.copy(umbilical.pivotPosition).add(new THREE.Vector3(0, 5, -5));
+    lapCamera.up.set(0, 0, 1); // Anterior abdominal wall (+Z) oriented towards screen top
     lapCamera.lookAt(new THREE.Vector3(15, 20, 0)); // Center of liver
 
     // Camera Presets
@@ -117,6 +118,7 @@ export class MultiViewport {
 
       // Keep laparoscope camera aiming at liver field from umbilical port
       lapCamera.position.copy(umbilical.pivotPosition).add(new THREE.Vector3(0, 8, -8));
+      lapCamera.up.set(0, 0, 1);
       lapCamera.lookAt(new THREE.Vector3(15, 20, 0));
       facePatientSideLabels(lapCamera);
       lapRenderer.render(scene, lapCamera);

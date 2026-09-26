@@ -4,6 +4,8 @@ import { CollisionDetector, VesselSegment } from '../math/collision';
 export interface AnatomyMeshes {
   group: THREE.Group;
   abdominalDome: THREE.Mesh;
+  skinDome: THREE.Mesh;
+  skinIncisionMarkers: THREE.Group;
   costalMarginLine: THREE.Line;
   intercostalRibs: THREE.Group;
   landmarks: THREE.Group;
@@ -14,6 +16,8 @@ export interface AnatomyMeshes {
   vesselMeshes: Map<string, THREE.Mesh>;
   updateTumor(position: THREE.Vector3, diameter: number, margin: number): void;
   setVesselAlert(isAlert: boolean): void;
+  setSkinOpacity(opacity: number): void;
+  updatePercutaneousIncision(position: THREE.Vector3): void;
 }
 
 export class AnatomyBuilder {
@@ -55,6 +59,66 @@ export class AnatomyBuilder {
     });
     const domeWire = new THREE.Mesh(domeGeom, domeWireMat);
     group.add(domeWire);
+
+    // 1b. Realistic Epidermal Skin Layer (Human skin tone PBR with subcutaneous depth)
+    const skinGeom = new THREE.SphereGeometry(142, 54, 30, 0, Math.PI * 2, 0, Math.PI * 0.48);
+    skinGeom.rotateX(Math.PI);
+    skinGeom.scale(1.0, 1.15, 0.7);
+    skinGeom.translate(10, 0, 46);
+
+    const skinMat = new THREE.MeshPhysicalMaterial({
+      color: 0xdfaa8b, // Natural warm epidermal skin tone
+      roughness: 0.55,
+      metalness: 0.02,
+      transmission: 0.25,
+      thickness: 2.5,
+      transparent: true,
+      opacity: 0.25, // default in translucent MIS planning mode
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      clearcoat: 0.15,
+      clearcoatRoughness: 0.3
+    });
+    const skinDome = new THREE.Mesh(skinGeom, skinMat);
+    skinDome.name = 'RealisticEpidermalSkin';
+    group.add(skinDome);
+
+    // Skin Incision Markers (Trocar and needle entry sites on skin surface)
+    const skinIncisionMarkers = new THREE.Group();
+    skinIncisionMarkers.name = 'SkinIncisionMarkers';
+
+    const createIncisionMarker = (name: string, pos: THREE.Vector3, color: number, radius: number = 5) => {
+      const markerGroup = new THREE.Group();
+      markerGroup.name = name;
+      markerGroup.position.copy(pos);
+
+      // Incision ring
+      const ringGeom = new THREE.RingGeometry(radius - 1.2, radius + 1.2, 24);
+      const ringMat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
+      const ring = new THREE.Mesh(ringGeom, ringMat);
+      ring.rotateX(-Math.PI * 0.15);
+      markerGroup.add(ring);
+
+      // Incision slit line
+      const slitPts = [new THREE.Vector3(-radius, 0, 0.5), new THREE.Vector3(radius, 0, 0.5)];
+      const slitLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(slitPts),
+        new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 })
+      );
+      slitLine.rotateX(-Math.PI * 0.15);
+      markerGroup.add(slitLine);
+
+      return markerGroup;
+    };
+
+    skinIncisionMarkers.add(createIncisionMarker('UmbilicalIncision', new THREE.Vector3(0, -90, 86), 0x00d2ff, 6));
+    skinIncisionMarkers.add(createIncisionMarker('SubxiphoidIncision', new THREE.Vector3(15, 80, 81), 0x9d4edd, 4));
+    skinIncisionMarkers.add(createIncisionMarker('SubcostalIncision', new THREE.Vector3(-75, -20, 69), 0x00ff66, 7));
+    skinIncisionMarkers.add(createIncisionMarker('ITTIncision', new THREE.Vector3(-105, 55, 21), 0xffb800, 6));
+
+    const percutaneousIncision = createIncisionMarker('PercutaneousIncision', new THREE.Vector3(-65, 0, 71), 0xff3b30, 3.5);
+    skinIncisionMarkers.add(percutaneousIncision);
+    group.add(skinIncisionMarkers);
 
     // 2. Costal Margin Line & Ribs
     const costalMarginPoints: THREE.Vector3[] = [];
@@ -307,9 +371,22 @@ export class AnatomyBuilder {
       }
     };
 
+    const setSkinOpacity = (opacity: number) => {
+      const clamped = Math.max(0, Math.min(1, opacity));
+      skinMat.opacity = clamped;
+      skinMat.depthWrite = clamped > 0.65;
+      skinMat.transparent = clamped < 0.99;
+    };
+
+    const updatePercutaneousIncision = (pos: THREE.Vector3) => {
+      percutaneousIncision.position.set(pos.x, pos.y, pos.z + 1.0);
+    };
+
     return {
       group,
       abdominalDome,
+      skinDome,
+      skinIncisionMarkers,
       costalMarginLine,
       intercostalRibs,
       landmarks,
@@ -319,7 +396,9 @@ export class AnatomyBuilder {
       vesselsGroup,
       vesselMeshes,
       updateTumor,
-      setVesselAlert
+      setVesselAlert,
+      setSkinOpacity,
+      updatePercutaneousIncision
     };
   }
 }

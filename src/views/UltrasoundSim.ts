@@ -228,6 +228,18 @@ export class UltrasoundSim {
       ctx.lineWidth = 1.5;
       ctx.stroke();
 
+      // Target engagement ring when needle tip is inside tumor
+      const tipToCenterDist = needleTip.distanceTo(tumorPos);
+      if (tipToCenterDist <= tumorRadiusMm) {
+        ctx.beginPath();
+        ctx.arc(tipX, tipY, 7, 0, Math.PI * 2);
+        ctx.strokeStyle = '#00ff66';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([2, 2]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
       // Comet-tail reverberation artifact extending below needle tip
       ctx.beginPath();
       ctx.moveTo(tipX - 1.5, tipY + 2);
@@ -303,5 +315,57 @@ export class UltrasoundSim {
       ctx.fillRect(w - 14, tickDepth, 8, 1);
       ctx.fillText(`${cm}`, w - 24, tickDepth + 3);
     }
+
+    // 7. Ultrasound Real-Time Puncture HUD Telemetry
+    const targetVec = new THREE.Vector3().subVectors(tumorPos, needleEntry);
+    const needleVec = new THREE.Vector3().subVectors(needleTip, needleEntry);
+    const targetDistance = targetVec.length();
+    const currentDepth = needleVec.length();
+    const targetUnit = targetDistance > 0.001 ? targetVec.clone().normalize() : new THREE.Vector3(0, 1, 0);
+    const currentProjection = needleVec.dot(targetUnit);
+    const signedDistanceToCenter = targetDistance - currentProjection;
+    const tipToCenterDist = needleTip.distanceTo(tumorPos);
+
+    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(6, 10, 16, 0.78)';
+    ctx.fillRect(8, h - 34, w - 16, 26);
+    ctx.strokeStyle = 'rgba(28, 44, 66, 0.85)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(8, h - 34, w - 16, 26);
+
+    ctx.fillStyle = '#00ffaa';
+    ctx.fillText(`DEPTH: ${currentDepth.toFixed(1)}mm`, 14, h - 21);
+
+    let statusText = '';
+    let statusColor = '#00d2ff';
+    if (Math.abs(signedDistanceToCenter) <= 2.0) {
+      statusText = 'TARGET ENGAGED (抵達靶心)';
+      statusColor = '#00ff66';
+    } else if (signedDistanceToCenter < -2.0) {
+      statusText = `OVERSHOOT (${Math.abs(signedDistanceToCenter).toFixed(1)}mm)`;
+      statusColor = '#ff3b30';
+    } else if (tipToCenterDist <= (tumorRadiusMm + safetyMargin)) {
+      statusText = `IN MARGIN (${signedDistanceToCenter.toFixed(1)}mm to center)`;
+      statusColor = '#ffb800';
+    } else {
+      statusText = `TO TARGET: +${signedDistanceToCenter.toFixed(1)}mm`;
+      statusColor = '#00d2ff';
+    }
+
+    ctx.fillStyle = statusColor;
+    ctx.fillText(statusText, 14, h - 11);
+
+    ctx.textAlign = 'right';
+    if (alignment.status === 'IN_PLANE') {
+      ctx.fillStyle = '#00ff66';
+      ctx.fillText('IN-PLANE ALIGNED', w - 14, h - 16);
+    } else if (alignment.status === 'CROSS_PLANE') {
+      ctx.fillStyle = '#ffb800';
+      ctx.fillText('CROSS-PLANE DOT', w - 14, h - 16);
+    } else {
+      ctx.fillStyle = '#ff3b30';
+      ctx.fillText('OUT-OF-PLANE', w - 14, h - 16);
+    }
+    ctx.textAlign = 'left';
   }
 }

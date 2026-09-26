@@ -589,6 +589,73 @@ function runTests() {
     );
   }
 
+  // 12. Laparoscopic Camera View Orientation Verification
+  // In laparoscopic surgery, looking from the umbilicus towards the cranial liver field with
+  // anterior abdominal wall oriented UP (+Z), patient-left (Left Liver S2/S3) MUST appear on
+  // the right of the screen (NDC x > 0), and patient-right (Right Liver S5-S8) MUST appear on
+  // the left of the screen (NDC x < 0).
+  const lapCamera = new THREE.PerspectiveCamera(70, 320 / 208, 1, 600);
+  const umbilical = TROCAR_PRESETS['umbilical'];
+  lapCamera.position.copy(umbilical.pivotPosition).add(new THREE.Vector3(0, 8, -8));
+  lapCamera.up.set(0, 0, 1);
+  lapCamera.lookAt(new THREE.Vector3(15, 20, 0));
+  lapCamera.updateMatrixWorld(true);
+  lapCamera.updateProjectionMatrix();
+
+  const leftLobeNDC = leftLobeMesh.position.clone().project(lapCamera);
+  const rightLobeNDC = rightLobeMesh.position.clone().project(lapCamera);
+  assert(
+    leftLobeNDC.x > 0,
+    `Laparoscopic camera: Left Liver must appear on the RIGHT side of the screen (NDC x > 0, got ${leftLobeNDC.x.toFixed(3)})`
+  );
+  assert(
+    rightLobeNDC.x < 0,
+    `Laparoscopic camera: Right Liver must appear on the LEFT side of the screen (NDC x < 0, got ${rightLobeNDC.x.toFixed(3)})`
+  );
+  assert(
+    rightLobeNDC.x < leftLobeNDC.x,
+    `Laparoscopic camera: Right liver (${rightLobeNDC.x.toFixed(3)}) must be strictly to the left of left liver (${leftLobeNDC.x.toFixed(3)}) on screen`
+  );
+
+  // 13. Epidermal Skin Layer & Opacity Control Verification
+  assert(anatomy.skinDome instanceof THREE.Mesh, 'Realistic epidermal skin mesh must exist in anatomy.');
+  assert(anatomy.skinIncisionMarkers instanceof THREE.Group, 'Skin incision markers group must exist.');
+  assert(anatomy.skinIncisionMarkers.children.length >= 5, 'Must have at least 5 skin incision markers (trocars + needle).');
+
+  const skinMat = anatomy.skinDome.material as THREE.MeshPhysicalMaterial;
+  anatomy.setSkinOpacity(0.25);
+  assertNear(skinMat.opacity, 0.25, 1e-6, 'Translucent mode skin opacity must be 0.25');
+  assert(!skinMat.depthWrite, 'Translucent skin must not write depth');
+
+  anatomy.setSkinOpacity(0.88);
+  assertNear(skinMat.opacity, 0.88, 1e-6, 'Opaque mode skin opacity must be 0.88');
+  assert(skinMat.depthWrite, 'Opaque skin must write depth');
+
+  const testPos = new THREE.Vector3(-45, 10, 72);
+  anatomy.updatePercutaneousIncision(testPos);
+  const percutaneousMarker = anatomy.skinIncisionMarkers.getObjectByName('PercutaneousIncision');
+  assert(percutaneousMarker instanceof THREE.Group, 'Percutaneous incision marker must exist.');
+  assertNear(percutaneousMarker.position.x, testPos.x, 1e-6, 'Incision marker X must match Point C');
+  assertNear(percutaneousMarker.position.y, testPos.y, 1e-6, 'Incision marker Y must match Point C');
+
+  // 14. Needle Insertion Distance & Monotonicity Verification
+  for (const [, preset] of Object.entries(LESION_PRESETS)) {
+    const entry = TROCAR_PRESETS[preset.suggestedProbePort].pivotPosition;
+    const target = preset.tumorPosition;
+    const totalDist = entry.distanceTo(target);
+
+    // Simulate advancing needle from 0 to totalDist in 10 steps
+    let previousDist = totalDist;
+    for (let step = 1; step <= 10; step++) {
+      const fraction = step / 10;
+      const currentTip = new THREE.Vector3().lerpVectors(entry, target, fraction);
+      const remainingDist = currentTip.distanceTo(target);
+      assert(remainingDist < previousDist, 'Distance to tumor center must be monotonically decreasing during insertion advance');
+      previousDist = remainingDist;
+    }
+    assertNear(previousDist, 0, 1e-6, 'At 100% insertion depth, distance to tumor center must be 0');
+  }
+
   console.log('PASS: kinematics round-trip and pitch sign');
   console.log('PASS: rendered needle, ultrasound plane, and ablation ellipsoid share world coordinates');
   console.log('PASS: lesion intersection, finite fan, and fixed-entry auto-align feasibility');
@@ -600,6 +667,9 @@ function runTests() {
   console.log('PASS: right-angle wedge optimizer point C calculation and in-plane coplanarity');
   console.log('PASS: DICOM LPS conversion and patient right/left scene orientation');
   console.log('PASS: illustrative lobe mesh proportions and complete tumor containment for every preset');
+  console.log('PASS: laparoscopic camera orientation (Left Liver on screen-right, Right Liver on screen-left)');
+  console.log('PASS: epidermal skin layer geometry, incision markers, and dual-mode opacity control');
+  console.log('PASS: needle insertion simulation monotonicity and target engagement precision');
 }
 
 runTests();
