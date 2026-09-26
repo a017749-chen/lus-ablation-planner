@@ -193,7 +193,7 @@ export class InstrumentBuilder {
 
     // Rectangular image slab: width = array length, depth near..far, 1.5 mm thick.
     const depthSpan = spec.image.farDepthMm - spec.image.nearDepthMm;
-    const sliceGeom = new THREE.BoxGeometry(spec.arrayLengthMm, spec.image.sliceThicknessMm, depthSpan);
+    const sliceGeom = new THREE.BoxGeometry(spec.image.widthMm, spec.image.sliceThicknessMm, depthSpan);
     sliceGeom.translate(0, 0, spec.image.nearDepthMm + depthSpan / 2);
     const usSliceMesh = new THREE.Mesh(sliceGeom, new THREE.MeshPhysicalMaterial({
       color: 0x00ff88, emissive: 0x004422, emissiveIntensity: 0.25, transparent: true,
@@ -275,7 +275,7 @@ export class InstrumentBuilder {
         normal: currentPose.planeNormal.clone(),
         xAxis: currentPose.arrayAxis.clone(),
         yAxis: currentPose.beamDir.clone(),
-        halfWidthMm: spec.arrayLengthMm / 2,
+        halfWidthMm: spec.image.widthMm / 2,
         nearDepthMm: spec.image.nearDepthMm,
         farDepthMm: spec.image.farDepthMm,
         sliceThicknessMm: spec.image.sliceThicknessMm

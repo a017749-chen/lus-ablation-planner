@@ -72,9 +72,13 @@ test('image plane contains the array axis (side-viewing), unlike the old transve
   near(toImage(pose, alongShaft).w, 0, 1e-9, 'points along the shaft are in plane');
 });
 
-test('guide visible depth: 30 deg from the array axis stops at 17 mm; from the beam axis, 52 mm', () => {
-  near(guideVisibleDepth(LUS_PROBE)!.max, 15 * 2 * Math.tan(Math.PI / 6), 1e-9, 'array-axis reference');
-  near(guideVisibleDepth(BEAM_30)!.max, 30 / Math.tan(Math.PI / 6), 1e-9, 'beam-axis reference');
+test('guide visible depth follows hole offset, image width and angle', () => {
+  // Hole 30 mm behind the array centre, 50 mm image, 30 deg from the tip axis:
+  // the line enters the image 5 mm from the hole and leaves it 55 mm from it.
+  const tip = guideVisibleDepth(LUS_PROBE)!;
+  near(tip.min, 5 * Math.tan(Math.PI / 6), 1e-9, 'enters the image');
+  near(tip.max, 55 * Math.tan(Math.PI / 6), 1e-9, 'leaves the image');
+  near(guideVisibleDepth(BEAM_30)!.max, LUS_PROBE.image.farDepthMm, 1e-9, 'beam-referenced line reaches the far edge');
 });
 
 test('guide line in world space matches its image-coordinate formula', () => {
@@ -129,7 +133,7 @@ test('every acoustic window really images the target', () => {
   for (const w of windows) {
     near(liverValue(w.point), 1, 1e-9, 'window on the liver surface');
     assert(w.depthMm >= LUS_PROBE.image.nearDepthMm && w.depthMm <= LUS_PROBE.image.farDepthMm, 'depth in image');
-    assert(w.lateralMm <= LUS_PROBE.arrayLengthMm / 2, 'lateral in image');
+    assert(w.lateralMm <= LUS_PROBE.image.widthMm / 2, 'lateral in image');
   }
 });
 
@@ -160,10 +164,13 @@ test('guided needle: skin entry, hole and target are collinear and the needle re
   }
 });
 
-test('guided needle with 30 deg from the array axis cannot reach S5/S6 and says why', () => {
-  const result = solveGuidedNeedle(SUBCOSTAL.pivotPosition, S5, LUS_PROBE);
-  assert(!result.feasible, 'the guide line leaves the image at 17 mm; S5/S6 is deeper');
-  assert(result.reasons[0] === 'guide-too-deep', `reason: ${result.reasons.join(', ')}`);
+test('guided needle with the measured probe reaches S5/S6 and refuses a target deeper than the guide', () => {
+  const ok = solveGuidedNeedle(SUBCOSTAL.pivotPosition, S5, LUS_PROBE);
+  assert(ok.feasible, 'S5/S6 lies within the 3-32 mm the guide line covers');
+  const shallow = { ...LUS_PROBE, image: { ...LUS_PROBE.image, widthMm: 30 },
+    guide: { ...LUS_PROBE.guide, holeOffsetMm: 15 } };
+  const refused = solveGuidedNeedle(SUBCOSTAL.pivotPosition, S5, shallow);
+  assert(!refused.feasible && refused.reasons[0] === 'guide-too-deep', `reason: ${refused.reasons.join(', ')}`);
 });
 
 test('needle path checks: length, vessel clearance and tilt fail independently', () => {

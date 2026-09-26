@@ -122,7 +122,7 @@ export function toImage(pose: ProbePose, p: THREE.Vector3): { u: number; v: numb
 }
 
 export function isInLinearImage(u: number, v: number, spec: LusProbeSpec = LUS_PROBE, tol = 1e-6): boolean {
-  const half = spec.arrayLengthMm / 2;
+  const half = spec.image.widthMm / 2;
   return Math.abs(u) <= half + tol && v >= spec.image.nearDepthMm - tol && v <= spec.image.farDepthMm + tol;
 }
 
@@ -155,7 +155,7 @@ export function guideLine(pose: ProbePose, spec: LusProbeSpec = LUS_PROBE): Guid
 /** Where along the depth axis the guide line is inside the image (independent of pose). */
 export function guideVisibleDepth(spec: LusProbeSpec = LUS_PROBE): { min: number; max: number } | null {
   const { du, dv } = guideDirection2D(spec);
-  const half = spec.arrayLengthMm / 2;
+  const half = spec.image.widthMm / 2;
   const u0 = -spec.guide.holeOffsetMm;
   const v0 = -spec.guide.holeHeightMm;
   if (du <= 1e-9 || dv <= 1e-9) return null;
