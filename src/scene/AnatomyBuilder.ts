@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { CollisionDetector, VesselSegment } from '../math/collision';
+import { TROCAR_PRESETS } from '../config/presets';
+import { ANTERIOR_SKIN_SURFACE, getAnteriorSkinSurfaceNormal, getAnteriorSkinSurfacePoint } from '../math/skinSurface';
+import { buildIllustrativeLobes } from './LiverLobeBuilder';
 
 export interface AnatomyMeshes {
   group: THREE.Group;
@@ -29,10 +32,22 @@ export class AnatomyBuilder {
     group.name = 'AnatomyRoot';
 
     // 1. Abdominal Wall Dome (Pneumoperitoneum ~14mmHg)
-    const domeGeom = new THREE.SphereGeometry(140, 48, 24, 0, Math.PI * 2, 0, Math.PI * 0.48);
-    domeGeom.rotateX(Math.PI);
-    domeGeom.scale(1.0, 1.15, 0.7);
-    domeGeom.translate(10, 0, 45);
+    const createAnteriorDomeGeometry = (
+      radiusX: number,
+      radiusY: number,
+      radiusZ: number,
+      baseZ: number,
+      widthSegments: number,
+      heightSegments: number
+    ) => {
+      const geometry = new THREE.SphereGeometry(1, widthSegments, heightSegments, 0, Math.PI * 2, 0, Math.PI / 2);
+      geometry.scale(radiusX, radiusZ, radiusY);
+      geometry.rotateX(Math.PI / 2);
+      geometry.translate(ANTERIOR_SKIN_SURFACE.centerX, ANTERIOR_SKIN_SURFACE.centerY, baseZ);
+      return geometry;
+    };
+
+    const domeGeom = createAnteriorDomeGeometry(143, 158, 128, -31, 48, 24);
 
     const domeMat = new THREE.MeshPhysicalMaterial({
       color: 0x244265,
@@ -61,10 +76,14 @@ export class AnatomyBuilder {
     group.add(domeWire);
 
     // 1b. Realistic Epidermal Skin Layer (Human skin tone PBR with subcutaneous depth)
-    const skinGeom = new THREE.SphereGeometry(142, 54, 30, 0, Math.PI * 2, 0, Math.PI * 0.48);
-    skinGeom.rotateX(Math.PI);
-    skinGeom.scale(1.0, 1.15, 0.7);
-    skinGeom.translate(10, 0, 46);
+    const skinGeom = createAnteriorDomeGeometry(
+      ANTERIOR_SKIN_SURFACE.radiusX,
+      ANTERIOR_SKIN_SURFACE.radiusY,
+      ANTERIOR_SKIN_SURFACE.radiusZ,
+      ANTERIOR_SKIN_SURFACE.baseZ,
+      54,
+      30
+    );
 
     const skinMat = new THREE.MeshPhysicalMaterial({
       color: 0xdfaa8b, // Natural warm epidermal skin tone
@@ -87,36 +106,68 @@ export class AnatomyBuilder {
     const skinIncisionMarkers = new THREE.Group();
     skinIncisionMarkers.name = 'SkinIncisionMarkers';
 
-    const createIncisionMarker = (name: string, pos: THREE.Vector3, color: number, radius: number = 5) => {
+    const createIncisionMarker = (
+      name: string,
+      x: number,
+      y: number,
+      color: number,
+      radius: number = 5
+    ) => {
+      const surfacePoint = getAnteriorSkinSurfacePoint(x, y, 1);
+      const surfaceNormal = getAnteriorSkinSurfaceNormal(x, y);
+      if (!surfacePoint || !surfaceNormal) {
+        throw new Error(`Incision marker ${name} lies outside the illustrative skin surface.`);
+      }
+
       const markerGroup = new THREE.Group();
       markerGroup.name = name;
-      markerGroup.position.copy(pos);
+      markerGroup.position.copy(surfacePoint);
+      markerGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), surfaceNormal);
 
-      // Incision ring
       const ringGeom = new THREE.RingGeometry(radius - 1.2, radius + 1.2, 24);
       const ringMat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
-      const ring = new THREE.Mesh(ringGeom, ringMat);
-      ring.rotateX(-Math.PI * 0.15);
-      markerGroup.add(ring);
+      markerGroup.add(new THREE.Mesh(ringGeom, ringMat));
 
-      // Incision slit line
       const slitPts = [new THREE.Vector3(-radius, 0, 0.5), new THREE.Vector3(radius, 0, 0.5)];
       const slitLine = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints(slitPts),
         new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 })
       );
-      slitLine.rotateX(-Math.PI * 0.15);
       markerGroup.add(slitLine);
 
       return markerGroup;
     };
 
-    skinIncisionMarkers.add(createIncisionMarker('UmbilicalIncision', new THREE.Vector3(0, -90, 86), 0x00d2ff, 6));
-    skinIncisionMarkers.add(createIncisionMarker('SubxiphoidIncision', new THREE.Vector3(15, 80, 81), 0x9d4edd, 4));
-    skinIncisionMarkers.add(createIncisionMarker('SubcostalIncision', new THREE.Vector3(-75, -20, 69), 0x00ff66, 7));
-    skinIncisionMarkers.add(createIncisionMarker('ITTIncision', new THREE.Vector3(-105, 55, 21), 0xffb800, 6));
+    skinIncisionMarkers.add(createIncisionMarker(
+      'UmbilicalIncision',
+      TROCAR_PRESETS.umbilical.pivotPosition.x,
+      TROCAR_PRESETS.umbilical.pivotPosition.y,
+      0x00d2ff,
+      6
+    ));
+    skinIncisionMarkers.add(createIncisionMarker(
+      'SubxiphoidIncision',
+      TROCAR_PRESETS.subxiphoid.pivotPosition.x,
+      TROCAR_PRESETS.subxiphoid.pivotPosition.y,
+      0x9d4edd,
+      4
+    ));
+    skinIncisionMarkers.add(createIncisionMarker(
+      'SubcostalIncision',
+      TROCAR_PRESETS.subcostal.pivotPosition.x,
+      TROCAR_PRESETS.subcostal.pivotPosition.y,
+      0x00ff66,
+      7
+    ));
+    skinIncisionMarkers.add(createIncisionMarker(
+      'ITTIncision',
+      TROCAR_PRESETS.itt.pivotPosition.x,
+      TROCAR_PRESETS.itt.pivotPosition.y,
+      0xffb800,
+      6
+    ));
 
-    const percutaneousIncision = createIncisionMarker('PercutaneousIncision', new THREE.Vector3(-65, 0, 71), 0xff3b30, 3.5);
+    const percutaneousIncision = createIncisionMarker('PercutaneousIncision', -65, 0, 0xff3b30, 3.5);
     skinIncisionMarkers.add(percutaneousIncision);
     group.add(skinIncisionMarkers);
 
@@ -232,46 +283,8 @@ export class AnatomyBuilder {
     const liverGroup = new THREE.Group();
     liverGroup.name = 'LiverParenchyma';
 
-    // These overlapping ellipsoids suggest gross lobe shape only. Their separate mesh volumes
-    // do not represent a non-overlapping 70:30 partition or patient-specific liver anatomy.
-    const rightLobeGeom = new THREE.SphereGeometry(65, 32, 24);
-    rightLobeGeom.scale(1.2, 1.1, 0.75);
-
-    const rightLobeMat = new THREE.MeshPhysicalMaterial({
-      color: 0xa8422b, // Realistic liver reddish-brown
-      roughness: 0.35,
-      metalness: 0.05,
-      transmission: 0.35,
-      transparent: true,
-      opacity: 0.72,
-      depthWrite: true,
-      clearcoat: 0.3
-    });
-    const rightLobe = new THREE.Mesh(rightLobeGeom, rightLobeMat);
-    rightLobe.name = 'IllustrativeRightLobe';
-    rightLobe.position.set(-35, 15, -10);
-    liverGroup.add(rightLobe);
-
-    // Left Lobe: S2/S3 (lateral), S4 (medial)
-    const leftLobeGeom = new THREE.SphereGeometry(60, 28, 20);
-    leftLobeGeom.scale(1.3, 0.85, 0.5);
-
-    const leftLobeMat = new THREE.MeshPhysicalMaterial({
-      color: 0x943622,
-      roughness: 0.4,
-      metalness: 0.05,
-      transmission: 0.38,
-      transparent: true,
-      opacity: 0.7,
-      depthWrite: true,
-      clearcoat: 0.25
-    });
-    const leftLobe = new THREE.Mesh(leftLobeGeom, leftLobeMat);
-    // Mirror the left-lobe placement across the patient midline.
-    leftLobe.name = 'IllustrativeLeftLobe';
-    leftLobe.position.set(38 * Math.cos(0.2) + 10 * Math.sin(0.2), -38 * Math.sin(0.2) + 10 * Math.cos(0.2), 5);
-    leftLobe.rotation.z = -0.2;
-    liverGroup.add(leftLobe);
+    const { rightLobe, leftLobe } = buildIllustrativeLobes();
+    liverGroup.add(rightLobe, leftLobe);
 
     // Diaphragmatic Dome surface indicator (for S7/S8 high dome)
     const domeCoverGeom = new THREE.SphereGeometry(68, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.35);
@@ -379,7 +392,13 @@ export class AnatomyBuilder {
     };
 
     const updatePercutaneousIncision = (pos: THREE.Vector3) => {
-      percutaneousIncision.position.set(pos.x, pos.y, pos.z + 1.0);
+      const surfacePoint = getAnteriorSkinSurfacePoint(pos.x, pos.y, 1);
+      const surfaceNormal = getAnteriorSkinSurfaceNormal(pos.x, pos.y);
+      percutaneousIncision.visible = !!surfacePoint && !!surfaceNormal;
+      if (surfacePoint && surfaceNormal) {
+        percutaneousIncision.position.copy(surfacePoint);
+        percutaneousIncision.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), surfaceNormal);
+      }
     };
 
     return {

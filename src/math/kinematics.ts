@@ -19,6 +19,49 @@ export interface FulcrumState {
  */
 export class FulcrumKinematics {
   /**
+   * Returns the first non-negative depth at which a ray enters a sphere.
+   * A null result means the forward ray does not intersect the target.
+   */
+  public static raySphereEntryDepth(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    center: THREE.Vector3,
+    radius: number
+  ): number | null {
+    if (!Number.isFinite(radius) || radius < 0) return null;
+    if (![...origin.toArray(), ...direction.toArray(), ...center.toArray()].every(Number.isFinite)) {
+      return null;
+    }
+
+    const directionLengthSq = direction.lengthSq();
+    if (directionLengthSq < 1e-12) return null;
+    if (origin.distanceToSquared(center) <= radius * radius) return 0;
+
+    const unitDirection = direction.clone().multiplyScalar(1 / Math.sqrt(directionLengthSq));
+    const toCenter = center.clone().sub(origin);
+    const projection = toCenter.dot(unitDirection);
+    if (projection < 0) return null;
+
+    const perpendicularSq = Math.max(0, toCenter.lengthSq() - projection * projection);
+    const radiusSq = radius * radius;
+    if (perpendicularSq > radiusSq + 1e-9) return null;
+
+    const halfChord = Math.sqrt(Math.max(0, radiusSq - perpendicularSq));
+    const entryDepth = projection - halfChord;
+    return entryDepth >= -1e-9 ? Math.max(0, entryDepth) : null;
+  }
+
+  /** True only when a point lies inside or on a sphere in world coordinates. */
+  public static isPointWithinSphere(
+    point: THREE.Vector3,
+    center: THREE.Vector3,
+    radius: number
+  ): boolean {
+    return Number.isFinite(radius) && radius >= 0 &&
+      point.distanceToSquared(center) <= radius * radius + 1e-9;
+  }
+
+  /**
    * Forward kinematics: compute instrument tip, handle and orientation from angles & depth
    */
   public static computeForward(

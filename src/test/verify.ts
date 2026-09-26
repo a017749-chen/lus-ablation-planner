@@ -14,6 +14,7 @@ import { estimateEllipsoidTargetOverlap } from '../math/coverage';
 import { FulcrumKinematics } from '../math/kinematics';
 import {
   ANTERIOR_VIEW,
+  SURGEON_VIEW,
   dicomLpsToScene,
   sceneToDicomLps
 } from '../math/patientCoordinates';
@@ -25,6 +26,8 @@ import {
 } from '../math/ultrasoundGeometry';
 import { AnatomyBuilder } from '../scene/AnatomyBuilder';
 import { InstrumentBuilder } from '../scene/Instruments';
+import { containsSphereWithinIllustrativeLobe } from '../scene/LiverLobeBuilder';
+import { getAnteriorSkinSurfaceNormal, getAnteriorSkinSurfacePoint } from '../math/skinSurface';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -67,33 +70,6 @@ function getClosedMeshVolume(mesh: THREE.Mesh): number {
   }
 
   return Math.abs(signedVolume);
-}
-
-function containsSphereWithinEllipsoid(mesh: THREE.Mesh, center: THREE.Vector3, radius: number): boolean {
-  mesh.geometry.computeBoundingBox();
-  const bounds = mesh.geometry.boundingBox;
-  if (!bounds) return false;
-
-  const radii = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
-  if (Math.min(radii.x, radii.y, radii.z) <= 0) return false;
-
-  mesh.updateMatrixWorld(true);
-  const localCenter = center.clone().applyMatrix4(mesh.matrixWorld.clone().invert());
-  const localScales = new THREE.Vector3();
-  mesh.getWorldScale(localScales);
-  const localRadius = radius / Math.min(
-    Math.abs(localScales.x),
-    Math.abs(localScales.y),
-    Math.abs(localScales.z)
-  );
-  const normalizedCenterDistance = Math.sqrt(
-    (localCenter.x / radii.x) ** 2 +
-    (localCenter.y / radii.y) ** 2 +
-    (localCenter.z / radii.z) ** 2
-  );
-
-  // Conservative bound: a sphere is contained if its center plus its largest normalized radius fits.
-  return normalizedCenterDistance + localRadius / Math.min(radii.x, radii.y, radii.z) < 1;
 }
 
 function runTests() {
@@ -562,6 +538,17 @@ function runTests() {
   assert(leftSideLabel instanceof THREE.Group, 'Patient-left marker must exist.');
   anatomy.group.updateMatrixWorld(true);
 
+  const rightBounds = new THREE.Box3().setFromObject(rightLobeMesh);
+  const leftBounds = new THREE.Box3().setFromObject(leftLobeMesh);
+  assertNear(
+    rightBounds.max.x,
+    leftBounds.min.x,
+    1e-4,
+    'Illustrative lobes must share one non-overlapping midline boundary'
+  );
+  assert(rightBounds.min.x < rightBounds.max.x, 'Right lobe must have nonzero width.');
+  assert(leftBounds.min.x < leftBounds.max.x, 'Left lobe must have nonzero width.');
+
   assert(rightLobeMesh.position.x < 0, 'Illustrative right lobe must be on negative scene X.');
   assert(leftLobeMesh.position.x > 0, 'Illustrative left lobe must be on positive scene X.');
   assert(rightSideLabel.position.x < 0, 'R marker must be on the patient-right side.');
@@ -571,8 +558,8 @@ function runTests() {
   const volLeftMesh = getClosedMeshVolume(leftLobeMesh);
   const rightMeshRatio = volRightMesh / (volRightMesh + volLeftMesh);
   const leftMeshRatio = volLeftMesh / (volRightMesh + volLeftMesh);
-  assert(rightMeshRatio >= 0.65 && rightMeshRatio <= 0.75, `Standalone right-lobe mesh volume should be ~70% of the two ellipsoid volumes (got ${(rightMeshRatio * 100).toFixed(1)}%)`);
-  assert(leftMeshRatio >= 0.25 && leftMeshRatio <= 0.35, `Standalone left-lobe mesh volume should be ~30% of the two ellipsoid volumes (got ${(leftMeshRatio * 100).toFixed(1)}%)`);
+  assert(rightMeshRatio >= 0.69 && rightMeshRatio <= 0.71, `Standalone right-lobe mesh volume should be ~70% of the combined lobe meshes (got ${(rightMeshRatio * 100).toFixed(1)}%)`);
+  assert(leftMeshRatio >= 0.29 && leftMeshRatio <= 0.31, `Standalone left-lobe mesh volume should be ~30% of the combined lobe meshes (got ${(leftMeshRatio * 100).toFixed(1)}%)`);
 
   const lobeForPreset: Record<string, THREE.Mesh> = {
     S2_S3: leftLobeMesh,
@@ -584,10 +571,39 @@ function runTests() {
     const lobe = lobeForPreset[presetId];
     assert(lobe instanceof THREE.Mesh, `${presetId} must map to an illustrative lobe mesh.`);
     assert(
-      containsSphereWithinEllipsoid(lobe, preset.tumorPosition, preset.tumorDiameter * 0.5),
+      containsSphereWithinIllustrativeLobe(lobe, preset.tumorPosition, preset.tumorDiameter * 0.5),
       `${presetId} full tumor sphere must fit within its illustrative lobe.`
     );
   }
+  assert(
+    !containsSphereWithinIllustrativeLobe(rightLobeMesh, new THREE.Vector3(14, 25, -10), 10),
+    'A tumor sphere crossing the shared lobe interface must be rejected.'
+  );
+  assert(
+    containsSphereWithinIllustrativeLobe(rightLobeMesh, new THREE.Vector3(0, 25, -10), 10),
+    'A tumor sphere fully inside the right illustrative lobe must be accepted.'
+  );
+
+  const scaledRightLobe = rightLobeMesh.clone();
+  scaledRightLobe.scale.set(2, 1, 1);
+  scaledRightLobe.updateMatrixWorld(true);
+  const rightMetadata = scaledRightLobe.userData.illustrativeLobe as { extentX: number };
+  const nearInterfaceCenter = new THREE.Vector3(rightMetadata.extentX * 0.5 - 1, 0, 0)
+    .applyMatrix4(scaledRightLobe.matrixWorld);
+  assert(
+    !containsSphereWithinIllustrativeLobe(scaledRightLobe, nearInterfaceCenter, 3),
+    'Containment must include the inverse world transform when the lobe is scaled.'
+  );
+
+  const surgeonCamera = new THREE.PerspectiveCamera(45, 1, 1, 1500);
+  surgeonCamera.position.set(...SURGEON_VIEW.position);
+  surgeonCamera.up.set(...SURGEON_VIEW.up);
+  surgeonCamera.lookAt(...SURGEON_VIEW.target);
+  surgeonCamera.updateMatrixWorld(true);
+  const rightCenter = rightBounds.getCenter(new THREE.Vector3()).project(surgeonCamera);
+  const leftCenter = leftBounds.getCenter(new THREE.Vector3()).project(surgeonCamera);
+  assert(rightCenter.x < 0, 'In the operating view, patient-right must project to screen-left.');
+  assert(leftCenter.x > 0, 'In the operating view, patient-left must project to screen-right.');
 
   // 12. Laparoscopic Camera View Orientation Verification
   // In laparoscopic surgery, looking from the umbilicus towards the cranial liver field with
@@ -602,8 +618,8 @@ function runTests() {
   lapCamera.updateMatrixWorld(true);
   lapCamera.updateProjectionMatrix();
 
-  const leftLobeNDC = leftLobeMesh.position.clone().project(lapCamera);
-  const rightLobeNDC = rightLobeMesh.position.clone().project(lapCamera);
+  const leftLobeNDC = leftBounds.getCenter(new THREE.Vector3()).project(lapCamera);
+  const rightLobeNDC = rightBounds.getCenter(new THREE.Vector3()).project(lapCamera);
   assert(
     leftLobeNDC.x > 0,
     `Laparoscopic camera: Left Liver must appear on the RIGHT side of the screen (NDC x > 0, got ${leftLobeNDC.x.toFixed(3)})`
@@ -631,30 +647,64 @@ function runTests() {
   assertNear(skinMat.opacity, 0.88, 1e-6, 'Opaque mode skin opacity must be 0.88');
   assert(skinMat.depthWrite, 'Opaque skin must write depth');
 
+  for (const marker of anatomy.skinIncisionMarkers.children) {
+    const expectedSkinPoint = getAnteriorSkinSurfacePoint(marker.position.x, marker.position.y, 1);
+    assert(expectedSkinPoint, `${marker.name} must fall on the anterior skin surface.`);
+    assertVectorNear(
+      marker.position,
+      expectedSkinPoint,
+      1e-6,
+      `${marker.name} must be projected onto the shared skin surface`
+    );
+  }
+
   const testPos = new THREE.Vector3(-45, 10, 72);
   anatomy.updatePercutaneousIncision(testPos);
   const percutaneousMarker = anatomy.skinIncisionMarkers.getObjectByName('PercutaneousIncision');
   assert(percutaneousMarker instanceof THREE.Group, 'Percutaneous incision marker must exist.');
-  assertNear(percutaneousMarker.position.x, testPos.x, 1e-6, 'Incision marker X must match Point C');
-  assertNear(percutaneousMarker.position.y, testPos.y, 1e-6, 'Incision marker Y must match Point C');
+  const expectedPercutaneousPoint = getAnteriorSkinSurfacePoint(testPos.x, testPos.y, 1);
+  assert(expectedPercutaneousPoint, 'Test percutaneous entry must fall on the anterior skin surface.');
+  assertVectorNear(
+    percutaneousMarker.position,
+    expectedPercutaneousPoint,
+    1e-6,
+    'Percutaneous marker must be projected to the skin at the selected X/Y entry'
+  );
+  const expectedNormal = getAnteriorSkinSurfaceNormal(testPos.x, testPos.y);
+  assert(expectedNormal, 'Test incision must have an outward skin normal.');
+  const markerNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(percutaneousMarker.quaternion);
+  assertVectorNear(markerNormal, expectedNormal, 1e-6, 'Incision ring must follow the local skin normal');
 
-  // 14. Needle Insertion Distance & Monotonicity Verification
-  for (const [, preset] of Object.entries(LESION_PRESETS)) {
-    const entry = TROCAR_PRESETS[preset.suggestedProbePort].pivotPosition;
-    const target = preset.tumorPosition;
-    const totalDist = entry.distanceTo(target);
+  // 14. Trajectory-based target intersection and 3D engagement checks.
+  const rayOrigin = new THREE.Vector3(0, 0, 0);
+  const rayDirection = new THREE.Vector3(0.6, 0.8, 0);
+  const obliqueTarget = new THREE.Vector3(2.8, 10.4, 0);
+  const obliqueEntryDepth = FulcrumKinematics.raySphereEntryDepth(
+    rayOrigin,
+    rayDirection,
+    obliqueTarget,
+    5
+  );
+  assertNear(obliqueEntryDepth ?? NaN, 7, 1e-6, 'Oblique insertion must stop at the first sphere intersection');
 
-    // Simulate advancing needle from 0 to totalDist in 10 steps
-    let previousDist = totalDist;
-    for (let step = 1; step <= 10; step++) {
-      const fraction = step / 10;
-      const currentTip = new THREE.Vector3().lerpVectors(entry, target, fraction);
-      const remainingDist = currentTip.distanceTo(target);
-      assert(remainingDist < previousDist, 'Distance to tumor center must be monotonically decreasing during insertion advance');
-      previousDist = remainingDist;
-    }
-    assertNear(previousDist, 0, 1e-6, 'At 100% insertion depth, distance to tumor center must be 0');
-  }
+  const missDepth = FulcrumKinematics.raySphereEntryDepth(
+    rayOrigin,
+    rayDirection,
+    new THREE.Vector3(100, 0, 0),
+    10
+  );
+  assert(missDepth === null, 'An angled needle that misses the tumor sphere must not receive a target depth.');
+
+  const lateralTip = new THREE.Vector3(100, 75, 0);
+  const lateralTarget = new THREE.Vector3(100, 0, 0);
+  assert(
+    !FulcrumKinematics.isPointWithinSphere(lateralTip, lateralTarget, 10),
+    'A tip aligned with the target plane but 75 mm lateral to the tumor must not be engaged.'
+  );
+  assert(
+    FulcrumKinematics.isPointWithinSphere(new THREE.Vector3(100, 0, 0), lateralTarget, 10),
+    'A tip within the tumor sphere must be treated as engaged.'
+  );
 
   console.log('PASS: kinematics round-trip and pitch sign');
   console.log('PASS: rendered needle, ultrasound plane, and ablation ellipsoid share world coordinates');
@@ -666,10 +716,10 @@ function runTests() {
   console.log('PASS: needle-shaft surface clearance and vessel warnings');
   console.log('PASS: right-angle wedge optimizer point C calculation and in-plane coplanarity');
   console.log('PASS: DICOM LPS conversion and patient right/left scene orientation');
-  console.log('PASS: illustrative lobe mesh proportions and complete tumor containment for every preset');
+  console.log('PASS: non-overlapping illustrative lobe mesh proportions, complete tumor containment, and surgeon-view orientation');
   console.log('PASS: laparoscopic camera orientation (Left Liver on screen-right, Right Liver on screen-left)');
-  console.log('PASS: epidermal skin layer geometry, incision markers, and dual-mode opacity control');
-  console.log('PASS: needle insertion simulation monotonicity and target engagement precision');
+  console.log('PASS: anterior skin geometry, surface-projected incision markers, and dual-mode opacity control');
+  console.log('PASS: trajectory-to-tumor intersection and 3D target engagement checks');
 }
 
 runTests();

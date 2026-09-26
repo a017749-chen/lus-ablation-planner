@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TROCAR_PRESETS } from '../config/presets';
-import { ANTERIOR_VIEW } from '../math/patientCoordinates';
+import { ANTERIOR_VIEW, SURGEON_VIEW } from '../math/patientCoordinates';
 
 export interface ViewportManager {
   mainCamera: THREE.PerspectiveCamera;
@@ -31,12 +31,13 @@ export class MultiViewport {
     mainContainer.appendChild(mainRenderer.domElement);
 
     const mainCamera = new THREE.PerspectiveCamera(45, mainWidth / mainHeight, 1, 1500);
-    mainCamera.position.set(0, -180, 240); // Initial surgeon angle
+    mainCamera.position.set(...SURGEON_VIEW.position);
+    mainCamera.up.set(...SURGEON_VIEW.up);
 
     const orbitControls = new OrbitControls(mainCamera, mainRenderer.domElement);
     orbitControls.enableDamping = true;
     orbitControls.dampingFactor = 0.05;
-    orbitControls.target.set(10, 10, 10);
+    orbitControls.target.set(...SURGEON_VIEW.target);
     orbitControls.maxDistance = 800;
     orbitControls.minDistance = 30;
 
@@ -77,14 +78,16 @@ export class MultiViewport {
           mainCamera.position.set(10, 340, 10);
           mainCamera.up.set(0, 0, -1);
           break;
-        case 'surgeon': // Surgeon Standing at Patient's Right-Inferior
-          mainCamera.position.set(-90, -190, 210);
-          mainCamera.up.set(0, 1, 0);
+        case 'surgeon': // Patient-left remains on screen-right.
+          mainCamera.position.set(...SURGEON_VIEW.position);
+          mainCamera.up.set(...SURGEON_VIEW.up);
+          orbitControls.target.set(...SURGEON_VIEW.target);
           break;
         case 'reset':
         default:
-          mainCamera.position.set(0, -180, 240);
-          mainCamera.up.set(0, 1, 0);
+          mainCamera.position.set(...SURGEON_VIEW.position);
+          mainCamera.up.set(...SURGEON_VIEW.up);
+          orbitControls.target.set(...SURGEON_VIEW.target);
           break;
       }
       orbitControls.update();

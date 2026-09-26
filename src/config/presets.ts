@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getAnteriorSkinSurfacePoint } from '../math/skinSurface';
 
 export const PROBE_PORT_IDS = ['subcostal', 'subxiphoid', 'itt'] as const;
 export type ProbePortId = (typeof PROBE_PORT_IDS)[number];
@@ -50,7 +51,7 @@ export const TROCAR_PRESETS: Record<string, TrocarDefinition> = {
     name: '臍孔套管 (Umbilical Port)',
     type: 'umbilical',
     diameter: 10,
-    pivotPosition: new THREE.Vector3(0, -90, 85),
+    pivotPosition: getAnteriorSkinSurfacePoint(0, -90)!,
     defaultDirection: new THREE.Vector3(0, 0.7, -0.7).normalize(),
     description: '10mm 光學腹腔鏡鏡頭通道，提供術野直視全景。',
     isActive: true,
@@ -61,7 +62,7 @@ export const TROCAR_PRESETS: Record<string, TrocarDefinition> = {
     name: '劍突下套管 (Subxiphoid Port)',
     type: 'subxiphoid',
     diameter: 5,
-    pivotPosition: new THREE.Vector3(15, 80, 80),
+    pivotPosition: getAnteriorSkinSurfacePoint(15, 80)!,
     defaultDirection: new THREE.Vector3(-0.2, -0.6, -0.75).normalize(),
     description: '5mm 輔助拉鉤或穿刺引導通道。',
     isActive: true,
@@ -72,7 +73,7 @@ export const TROCAR_PRESETS: Record<string, TrocarDefinition> = {
     name: '右肋下套管 (Right Subcostal Port)',
     type: 'subcostal',
     diameter: 12,
-    pivotPosition: new THREE.Vector3(-75, -20, 68),
+    pivotPosition: getAnteriorSkinSurfacePoint(-75, -20)!,
     defaultDirection: new THREE.Vector3(0.5, 0.4, -0.75).normalize(),
     description: '12mm 腹腔鏡超音波 (LUS) 探頭主操作通道。',
     isActive: true,
@@ -83,7 +84,7 @@ export const TROCAR_PRESETS: Record<string, TrocarDefinition> = {
     name: '肋間經胸套管 (Intercostal Transthoracic Trocar, ITT)',
     type: 'itt',
     diameter: 10,
-    pivotPosition: new THREE.Vector3(-105, 55, 20),
+    pivotPosition: getAnteriorSkinSurfacePoint(-105, 55)!,
     defaultDirection: new THREE.Vector3(0.7, -0.3, -0.65).normalize(),
     description: '專為 S7/S8 橫膈圓頂盲區設計之經肋間徑路，穿過膈肌直達肝頂。',
     isActive: false, // Activated dynamically for S7/S8

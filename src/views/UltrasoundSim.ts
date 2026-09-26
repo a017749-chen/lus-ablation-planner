@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FulcrumKinematics } from '../math/kinematics';
 import { AlignmentResult } from '../math/alignmentEngine';
 import { closestPointInUltrasoundSector, getSphereSlabIntersection } from '../math/ultrasoundGeometry';
 import { ProbeUSPlaneData } from '../scene/Instruments';
@@ -338,17 +339,17 @@ export class UltrasoundSim {
 
     let statusText = '';
     let statusColor = '#00d2ff';
-    if (Math.abs(signedDistanceToCenter) <= 2.0) {
-      statusText = 'TARGET ENGAGED (抵達靶心)';
+    if (FulcrumKinematics.isPointWithinSphere(needleTip, tumorPos, tumorRadiusMm)) {
+      statusText = 'TARGET ENGAGED (腫瘤範圍內)';
       statusColor = '#00ff66';
-    } else if (signedDistanceToCenter < -2.0) {
-      statusText = `OVERSHOOT (${Math.abs(signedDistanceToCenter).toFixed(1)}mm)`;
+    } else if (signedDistanceToCenter < -tumorRadiusMm) {
+      statusText = `PAST TARGET PLANE (3D error: ${tipToCenterDist.toFixed(1)}mm)`;
       statusColor = '#ff3b30';
     } else if (tipToCenterDist <= (tumorRadiusMm + safetyMargin)) {
-      statusText = `IN MARGIN (${signedDistanceToCenter.toFixed(1)}mm to center)`;
+      statusText = `IN MARGIN (${(tipToCenterDist - tumorRadiusMm).toFixed(1)}mm to tumor edge)`;
       statusColor = '#ffb800';
     } else {
-      statusText = `TO TARGET: +${signedDistanceToCenter.toFixed(1)}mm`;
+      statusText = `TO TARGET: ${tipToCenterDist.toFixed(1)}mm 3D error`;
       statusColor = '#00d2ff';
     }
 
