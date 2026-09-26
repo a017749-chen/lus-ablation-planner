@@ -715,6 +715,30 @@ function runTests() {
     'A tip within the tumor sphere must be treated as engaged.'
   );
 
+  // 15. Couinaud Segments (I~VIII) & Anatomical Landmarks (Gallbladder & Falciform Ligament)
+  assert(anatomy.couinaud instanceof Object, 'Couinaud anatomical elements must be initialized.');
+  assert(anatomy.couinaud.gallbladder instanceof THREE.Group, 'Gallbladder assembly must exist.');
+  assert(anatomy.couinaud.falciformLigament instanceof THREE.Group, 'Falciform ligament assembly must exist.');
+  assert(anatomy.couinaud.fissureLines instanceof THREE.Group, 'Couinaud fissure lines must exist.');
+  assert(anatomy.couinaud.segmentBadges instanceof THREE.Group, 'Couinaud segment badges group must exist.');
+  assert(anatomy.couinaud.segmentBadges.children.length === 9, 'All 9 Couinaud badges (S1-S8 including S4a/S4b) must exist.');
+
+  // Test Couinaud toggle
+  anatomy.setCouinaudVisible(false);
+  assert(!anatomy.couinaud.fissureLines.visible, 'Fissure lines should hide when Couinaud visibility is disabled.');
+  assert(!anatomy.couinaud.segmentBadges.visible, 'Segment badges should hide when Couinaud visibility is disabled.');
+  anatomy.setCouinaudVisible(true);
+  assert(anatomy.couinaud.fissureLines.visible, 'Fissure lines should show when Couinaud visibility is enabled.');
+  assert(anatomy.couinaud.segmentBadges.visible, 'Segment badges should show when Couinaud visibility is enabled.');
+
+  // Verify gallbladder anatomical position in gallbladder fossa (between IVb and V, negative X)
+  const gbMesh = anatomy.couinaud.gallbladder.getObjectByName('GallbladderMesh');
+  assert(gbMesh instanceof THREE.Mesh, 'Gallbladder mesh must exist.');
+  const gbFundus = anatomy.couinaud.gallbladder.getObjectByName('GallbladderFundus');
+  assert(gbFundus instanceof THREE.Mesh, 'Gallbladder fundus must exist.');
+  assert(gbFundus.position.x < 0, 'Gallbladder must be on the anatomical right/midline fossa (negative scene X).');
+  assert(gbFundus.position.y < 0, 'Gallbladder fundus must peek at the inferior margin (negative scene Y).');
+
   console.log('PASS: kinematics round-trip and pitch sign');
   console.log('PASS: rendered needle, ultrasound plane, and ablation ellipsoid share world coordinates');
   console.log('PASS: lesion intersection, finite fan, and fixed-entry auto-align feasibility');
@@ -729,6 +753,7 @@ function runTests() {
   console.log('PASS: laparoscopic camera orientation (Left Liver on screen-right, Right Liver on screen-left)');
   console.log('PASS: anterior skin geometry, surface-projected incision markers, and dual-mode opacity control');
   console.log('PASS: trajectory-to-tumor intersection and 3D target engagement checks');
+  console.log('PASS: Couinaud 8 segments, fissure lines, gallbladder and falciform ligament anatomical landmarks');
 }
 
 runTests();

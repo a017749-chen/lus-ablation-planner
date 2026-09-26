@@ -194,3 +194,90 @@ export function ribCageEvaluationAvailable(): boolean {
     : patient.ribCageStatus(new THREE.Vector3());
   return status !== 'not-evaluable';
 }
+
+export interface ArrayCouplingMetrics {
+  hasCoupling: boolean;
+  maxGapMm: number;
+  maxDivergenceDeg: number;
+  isOverhang: boolean;
+}
+
+/**
+ * Checks whether a rigid linear ultrasound transducer array maintains good acoustic
+ * coupling across its full face on the curved liver surface.
+ *
+ * Checks:
+ * 1. Overhang: neither end extends past the liver boundary into empty space.
+ * 2. Standoff Gap: the physical gap between flat array endpoints and curved tissue
+ *    does not exceed `maxGapMm` (fluid/tissue compression limit).
+ * 3. Normal Divergence: the tissue surface normal does not diverge by more than
+ *    `maxDivergenceDeg` relative to the array face normal.
+ */
+export function evaluateArrayAcousticCoupling(
+  contactPoint: THREE.Vector3,
+  arrayAxis: THREE.Vector3,
+  beamDir: THREE.Vector3,
+  arrayWidthMm: number,
+  maxGapMm = 3.5,
+  maxDivergenceDeg = 42.0
+): ArrayCouplingMetrics {
+  const halfWidth = arrayWidthMm * 0.5;
+  const arrayNormal = beamDir.clone().negate().normalize();
+  let maxGap = 0;
+  let maxDiv = 0;
+  let isOverhang = false;
+
+  // Sample array endpoints and intermediate points (-1, -0.5, 0.5, 1)
+  const sampleFractions = [-1, -0.5, 0.5, 1];
+  for (const frac of sampleFractions) {
+    const pEnd = contactPoint.clone().addScaledVector(arrayAxis, frac * halfWidth);
+
+    // Measure standoff gap along inward beam direction into the liver
+    let gap = 0;
+    let entered = false;
+    let surfPoint = pEnd;
+
+    const maxSearchDist = 12.0;
+    const steps = 16;
+    for (let i = 0; i <= steps; i++) {
+      const t = (i / steps) * maxSearchDist;
+      const testP = pEnd.clone().addScaledVector(beamDir, t);
+      if (liverValue(testP) <= 1.0) {
+        // Refine with binary search
+        let tLow = Math.max(0, t - maxSearchDist / steps);
+        let tHigh = t;
+        for (let b = 0; b < 6; b++) {
+          const tMid = (tLow + tHigh) * 0.5;
+          const midP = pEnd.clone().addScaledVector(beamDir, tMid);
+          if (liverValue(midP) <= 1.0) {
+            tHigh = tMid;
+          } else {
+            tLow = tMid;
+          }
+        }
+        gap = tHigh;
+        surfPoint = pEnd.clone().addScaledVector(beamDir, gap);
+        entered = true;
+        break;
+      }
+    }
+
+    if (!entered) {
+      isOverhang = true;
+      maxGap = Math.max(maxGap, maxSearchDist);
+    } else {
+      maxGap = Math.max(maxGap, gap);
+      const nSurf = liverNormal(surfPoint);
+      const divDeg = THREE.MathUtils.radToDeg(arrayNormal.angleTo(nSurf));
+      maxDiv = Math.max(maxDiv, divDeg);
+    }
+  }
+
+  const hasCoupling = !isOverhang && maxGap <= maxGapMm && maxDiv <= maxDivergenceDeg;
+  return {
+    hasCoupling,
+    maxGapMm: maxGap,
+    maxDivergenceDeg: maxDiv,
+    isOverhang
+  };
+}
