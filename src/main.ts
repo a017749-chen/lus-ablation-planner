@@ -15,6 +15,8 @@ import { InstrumentBuilder, InstrumentSystem } from './scene/Instruments';
 import { MultiViewport, ViewportManager } from './views/MultiViewport';
 import { UltrasoundSim } from './views/UltrasoundSim';
 import { AlignmentEngine, AlignmentResult } from './math/alignmentEngine';
+import { FulcrumKinematics } from './math/kinematics';
+import { getAnteriorSkinSurfacePoint } from './math/skinSurface';
 import { CollisionDetector, CollisionCheckResult } from './math/collision';
 import { WedgeOptimizer } from './math/wedgeOptimizer';
 import { estimateEllipsoidTargetOverlap } from './math/coverage';
@@ -30,7 +32,8 @@ class SurgicalPlannerApp {
   // Active surgical state
   private activePreset: LesionPreset = LESION_PRESETS['S5_S6'];
   private portSelection: PortSelectionState = getSuggestedPortSelection(LESION_PRESETS['S5_S6']);
-  private percutaneousPivot: THREE.Vector3 = new THREE.Vector3(-65, 0, 70);
+  private percutaneousPivot: THREE.Vector3 =
+    getAnteriorSkinSurfacePoint(-65, 0) ?? new THREE.Vector3(-65, 0, 70);
   private percutaneousNormal: THREE.Vector3 = new THREE.Vector3(0, 0, -1);
   private isWedgeGuideVisible: boolean = true;
 
@@ -172,9 +175,12 @@ class SurgicalPlannerApp {
     this.needleYaw = preset.needleInitialConfig.yaw;
 
     if (preset.needleInitialConfig.percutaneousEntry) {
-      this.percutaneousPivot.copy(preset.needleInitialConfig.percutaneousEntry);
+      const entry = preset.needleInitialConfig.percutaneousEntry;
+      this.percutaneousPivot.copy(getAnteriorSkinSurfacePoint(entry.x, entry.y) ?? entry);
     } else {
-      this.percutaneousPivot.set(-65, 0, 70);
+      this.percutaneousPivot.copy(
+        getAnteriorSkinSurfacePoint(-65, 0) ?? new THREE.Vector3(-65, 0, 70)
+      );
     }
     this.percutaneousNormal.set(0, 0, -1);
 
@@ -381,13 +387,32 @@ class SurgicalPlannerApp {
   }
 
   /**
-   * Calculate distance from active needle entry point to tumor target center
+   * Return the first insertion depth where the current needle trajectory enters the target sphere.
+   * A null result means the current trajectory misses the tumor.
    */
-  public getTargetNeedleDepth(): number {
+  public getTargetNeedleDepth(): number | null {
+    const trocar = TROCAR_PRESETS[this.needleTrocarId];
     const pivot = this.needleMode === 'trocar'
-      ? (TROCAR_PRESETS[this.needleTrocarId]?.pivotPosition || new THREE.Vector3(0, -90, 85))
+      ? (trocar?.pivotPosition || new THREE.Vector3(0, -90, 85))
       : this.percutaneousPivot;
-    return pivot.distanceTo(this.activePreset.tumorPosition);
+    const baseNormal = this.needleMode === 'trocar'
+      ? (trocar?.defaultDirection || new THREE.Vector3(0, 0, -1))
+      : this.percutaneousNormal;
+    const direction = FulcrumKinematics.computeForward(
+      pivot,
+      baseNormal,
+      this.needlePitch,
+      this.needleYaw,
+      0,
+      0
+    ).direction;
+
+    return FulcrumKinematics.raySphereEntryDepth(
+      pivot,
+      direction,
+      this.activePreset.tumorPosition,
+      this.tumorDiameter * 0.5
+    );
   }
 
   /**
@@ -398,6 +423,7 @@ class SurgicalPlannerApp {
       this.stopInsertionAnimation();
     } else {
       const targetDepth = this.getTargetNeedleDepth();
+      if (targetDepth === null) return;
       if (this.needleDepth >= targetDepth - 0.5) {
         this.needleDepth = 0;
         this.syncSlidersToState();
@@ -498,18 +524,23 @@ class SurgicalPlannerApp {
 
     // 4c. Update Needle Target Distance Indicator
     const targetDepth = this.getTargetNeedleDepth();
-    const distRemaining = targetDepth - this.needleDepth;
     const labelDist = document.getElementById('label-puncture-target-dist');
     if (labelDist) {
-      if (Math.abs(distRemaining) <= 1.0) {
-        labelDist.textContent = '0.0 mm (已抵達靶心)';
-        labelDist.className = 'text-emerald-400 font-bold';
-      } else if (distRemaining > 1.0) {
-        labelDist.textContent = `+${distRemaining.toFixed(1)} mm (逼近中)`;
-        labelDist.className = 'text-cyan-300 font-bold';
-      } else {
-        labelDist.textContent = `${distRemaining.toFixed(1)} mm (穿透靶心)`;
+      if (targetDepth === null) {
+        labelDist.textContent = '目前針軌跡未穿過腫瘤';
         labelDist.className = 'text-rose-400 font-bold';
+      } else {
+        const distRemaining = targetDepth - this.needleDepth;
+        if (Math.abs(distRemaining) <= 1.0) {
+          labelDist.textContent = '0.0 mm (已進入腫瘤範圍)';
+          labelDist.className = 'text-emerald-400 font-bold';
+        } else if (distRemaining > 1.0) {
+          labelDist.textContent = `+${distRemaining.toFixed(1)} mm (逼近靶區)`;
+          labelDist.className = 'text-cyan-300 font-bold';
+        } else {
+          labelDist.textContent = `${distRemaining.toFixed(1)} mm (已越過靶區入口)`;
+          labelDist.className = 'text-rose-400 font-bold';
+        }
       }
     }
 
@@ -814,7 +845,9 @@ class SurgicalPlannerApp {
     });
     document.getElementById('btn-needle-target-depth')?.addEventListener('click', () => {
       this.stopInsertionAnimation();
-      this.needleDepth = this.getTargetNeedleDepth();
+      const targetDepth = this.getTargetNeedleDepth();
+      if (targetDepth === null) return;
+      this.needleDepth = targetDepth;
       this.syncSlidersToState();
       this.updateKinematicsAndMath();
     });
@@ -868,7 +901,9 @@ class SurgicalPlannerApp {
 
       const speedMmPerSec = 16.0; // ~16 mm/s realistic clinical puncture velocity
       const targetDepth = this.getTargetNeedleDepth();
-      if (this.needleDepth < targetDepth) {
+      if (targetDepth === null) {
+        this.stopInsertionAnimation();
+      } else if (this.needleDepth < targetDepth) {
         this.needleDepth = Math.min(targetDepth, this.needleDepth + speedMmPerSec * dt);
         this.syncSlidersToState();
         this.updateKinematicsAndMath();
