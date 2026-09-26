@@ -200,7 +200,7 @@ function runTests() {
   assertNear(Math.abs(plane.normal.dot(plane.yAxis)), 0, 1e-8, 'Probe normal/depth orthogonality');
   assertNear(Math.abs(plane.xAxis.dot(plane.yAxis)), 0, 1e-8, 'Probe lateral/depth orthogonality');
   assert(plane.kind === 'linear', 'Side-viewing linear array image');
-  assertNear(plane.halfWidthMm, LUS_PROBE.arrayLengthMm / 2, 1e-8, 'Image half-width equals half the array');
+  assertNear(plane.halfWidthMm, LUS_PROBE.image.widthMm / 2, 1e-8, 'Image half-width follows the displayed image width');
   assertNear(plane.farDepthMm, LUS_PROBE.image.farDepthMm, 1e-8, 'Image depth');
   assertNear(plane.sliceThicknessMm, 1.5, 1e-8, 'Ultrasound slice thickness');
 

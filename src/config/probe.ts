@@ -40,6 +40,8 @@ export interface LusProbeSpec {
   maxTrocarTiltDeg: number;
   arrayLengthMm: number;
   image: {
+    /** Displayed image width; may exceed the array (trapezoid / wide field). */
+    widthMm: number;
     nearDepthMm: number;
     farDepthMm: number;
     sliceThicknessMm: number;
@@ -57,12 +59,13 @@ export const LUS_PROBE: LusProbeSpec = {
   maxTrocarTiltDeg: 60,
   arrayLengthMm: 30,
   image: {
+    widthMm: 50, // owner, 2026-09-26
     nearDepthMm: 0,
     farDepthMm: 80,
     sliceThicknessMm: 1.5
   },
   guide: {
-    holeOffsetMm: 15, // proximal end of a 30 mm array
+    holeOffsetMm: 30, // behind the array centre; owner, 2026-09-26 (about 3 cm)
     holeHeightMm: 0,
     angleDeg: 30,
     angleReference: 'array-axis'

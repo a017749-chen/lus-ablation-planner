@@ -47,7 +47,7 @@ export function findAcousticWindows(
   spec: LusProbeSpec = LUS_PROBE,
   surface: LiverSurfaceSample[] = liverSurface()
 ): AcousticWindow[] {
-  const half = spec.arrayLengthMm / 2;
+  const half = spec.image.widthMm / 2;
   const windows: AcousticWindow[] = [];
   for (const { point, normal } of surface) {
     // The probe reaches the anterior and inferior surfaces from the pneumoperitoneum;
@@ -266,7 +266,7 @@ export function solveGuidedNeedle(
 ): GuidedResult {
   const failures = new Map<Reason, number>();
   const fail = (r: Reason) => failures.set(r, (failures.get(r) ?? 0) + 1);
-  const half = spec.arrayLengthMm / 2;
+  const half = spec.image.widthMm / 2;
   const solutions: GuidedSolution[] = [];
   if (!windows.length) return { feasible: false, reasons: ['no-window'], warnings: [], solutions };
 
