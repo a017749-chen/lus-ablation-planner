@@ -19,8 +19,9 @@ export interface GuideSpec {
   /** Angle between the guide line and the reference axis (degrees). */
   angleDeg: number;
   /**
-   * Which axis angleDeg is measured from. The owner quoted "about 30 degrees";
-   * it is not yet confirmed whether that is from the probe/array axis or from the beam.
+   * Which axis angleDeg is measured from. The guide is fixed to the transducer tip
+   * and bends with it; the owner's 30 degrees is measured from the tip (array) axis,
+   * not from the shaft. 'beam-axis' is kept for probes specified the other way.
    */
   angleReference: 'array-axis' | 'beam-axis';
 }
