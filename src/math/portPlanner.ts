@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { LUS_PROBE, LusProbeSpec, NEEDLE_SPEC, NeedleSpec } from '../config/probe';
 import {
   isOverRibCage,
+  liverNormal,
   liverValue,
   LiverSurfaceSample,
   raySkinIntersection,
@@ -410,7 +411,8 @@ export function buildSkinMap(
         skin,
         probeOk: evaluateProbePort(skin, target, spec, mapWindows).feasible,
         needleOk: probePivot
-          ? !!evaluateFreehandPlan(probePivot, skin, target, spec, windows).entry
+          ? !!evaluateFreehandPlan(probePivot, skin, target, spec, windows, FREEHAND_LIMITS,
+            REFINEMENT.fineBlindStepMm).entry
           : evaluateFreehandEntry(skin, target, spec, windows).feasible,
         overRibCage: isOverRibCage(x, y)
       });
@@ -521,7 +523,8 @@ export function poseProbeForNeedle(
   target: THREE.Vector3,
   spec: LusProbeSpec = LUS_PROBE,
   windows: AcousticWindow[] = findAcousticWindows(target, spec),
-  limits = FREEHAND_LIMITS
+  limits = FREEHAND_LIMITS,
+  blindStepMm = 1
 ): { solution?: FreehandPose; reasons: Reason[] } {
   const needle = target.clone().sub(skin).normalize();
   const failures = new Map<Reason, number>();
@@ -539,7 +542,7 @@ export function poseProbeForNeedle(
       if (probeGapMm < limits.probeClearanceMm) { fail('needle-hits-probe'); continue; }
       const needleBeamAngleDeg = THREE.MathUtils.radToDeg(Math.acos(Math.min(1, Math.abs(needle.dot(pose.beamDir)))));
       if (needleBeamAngleDeg < limits.minNeedleBeamDeg) { fail('needle-too-steep'); continue; }
-      const blindMm = blindIntrahepaticMm(pose, skin, target, spec);
+      const blindMm = blindIntrahepaticMm(pose, skin, target, spec, blindStepMm);
       if (blindMm > limits.maxBlindMm) { fail('needle-blind-in-liver'); continue; }
       best = { window, pose, needleBeamAngleDeg, blindMm, probeGapMm };
     }
@@ -562,28 +565,112 @@ export function evaluateFreehandPlan(
   target: THREE.Vector3,
   spec: LusProbeSpec = LUS_PROBE,
   windows: AcousticWindow[] = findAcousticWindows(target, spec),
-  limits = FREEHAND_LIMITS
+  limits = FREEHAND_LIMITS,
+  blindStepMm = 1
 ): { entry?: FreehandPlanEntry; needle: NeedlePathCheck; reasons: Reason[] } {
   const needle = checkNeedlePath(skin, target);
   if (!needle.feasible) return { needle, reasons: needle.reasons };
-  const { solution, reasons } = poseProbeForNeedle(pivot, skin, target, spec, windows, limits);
+  const { solution, reasons } = poseProbeForNeedle(pivot, skin, target, spec, windows, limits, blindStepMm);
   if (!solution) return { needle, reasons };
   return { entry: { skin, needle, probe: solution, warnings: needle.warnings }, needle, reasons: [] };
+}
+
+/**
+ * Resolution of the final decision. The 10 mm skin grid only finds candidates; each
+ * is then decided with blind length sampled every 0.1 mm, and called robust only if
+ * every point of a 1 mm grid within +/- 2 mm on the skin also works (the probe may be
+ * re-posed for each). Illustrative, uncalibrated tolerances.
+ */
+export const REFINEMENT = {
+  skinToleranceMm: 2,
+  skinStepMm: 1,
+  fineBlindStepMm: 0.1
+};
+
+export interface Margin {
+  value: number;
+  limit: number;
+  /** Distance inside the limit, in the value's unit; negative = violated. */
+  margin: number;
+}
+
+export interface FreehandMargins {
+  probeGap: Margin; // mm, >= limit
+  blind: Margin; // mm, <= limit
+  needleBeam: Margin; // deg, >= limit
+  rock: Margin; // deg, <= limit
+  vessel: Margin; // mm, >= limit
+  needleLength: Margin; // mm, <= limit
+  flex: Margin; // deg, <= limit
+}
+
+const atLeast = (value: number, limit: number): Margin => ({ value, limit, margin: value - limit });
+const atMost = (value: number, limit: number): Margin => ({ value, limit, margin: limit - value });
+
+/** Every checked quantity of an entry, with its threshold and how far inside it the entry is. */
+export function freehandMargins(
+  entry: FreehandPlanEntry,
+  target: THREE.Vector3,
+  spec: LusProbeSpec = LUS_PROBE,
+  limits = FREEHAND_LIMITS,
+  needle: NeedleSpec = NEEDLE_SPEC
+): FreehandMargins {
+  const pose = entry.probe.pose;
+  const rock = THREE.MathUtils.radToDeg(pose.beamDir.angleTo(liverNormal(entry.probe.window.point).negate()));
+  return {
+    probeGap: atLeast(needleProbeGapMm(pose, entry.skin, target, spec), limits.probeClearanceMm),
+    blind: atMost(blindIntrahepaticMm(pose, entry.skin, target, spec, REFINEMENT.fineBlindStepMm), limits.maxBlindMm),
+    needleBeam: atLeast(entry.probe.needleBeamAngleDeg, limits.minNeedleBeamDeg),
+    rock: atMost(rock, IN_PLANE_TOLERANCE_DEG),
+    vessel: atLeast(entry.needle.vesselClearanceMm, needle.vesselClearanceMm),
+    needleLength: atMost(entry.needle.lengthMm, needle.usableLengthMm),
+    flex: atMost(pose.flexDeg, spec.maxFlexDeg)
+  };
+}
+
+export interface RefinedFreehandEntry extends FreehandPlanEntry {
+  margins: FreehandMargins;
+  /** Feasible at every 1 mm skin point within the tolerance. */
+  robust: boolean;
+}
+
+/** Stage 2 and 3 for one coarse candidate: fine decision, neighbourhood, margins. */
+export function refineFreehandEntry(
+  pivot: THREE.Vector3,
+  coarse: FreehandPlanEntry,
+  target: THREE.Vector3,
+  spec: LusProbeSpec = LUS_PROBE,
+  windows: AcousticWindow[] = findAcousticWindows(target, spec),
+  limits = FREEHAND_LIMITS
+): RefinedFreehandEntry | null {
+  const fine = evaluateFreehandPlan(pivot, coarse.skin, target, spec, windows, limits, REFINEMENT.fineBlindStepMm);
+  if (!fine.entry) return null;
+  const { skinToleranceMm: r, skinStepMm: step } = REFINEMENT;
+  let robust = true;
+  for (let dx = -r; dx <= r + 1e-9 && robust; dx += step) {
+    for (let dy = -r; dy <= r + 1e-9 && robust; dy += step) {
+      if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) continue;
+      const p = getAnteriorSkinSurfacePoint(coarse.skin.x + dx, coarse.skin.y + dy);
+      robust = !!p && !!evaluateFreehandPlan(pivot, p, target, spec, windows, limits, REFINEMENT.fineBlindStepMm).entry;
+    }
+  }
+  return { ...fine.entry, margins: freehandMargins(fine.entry, target, spec, limits), robust };
 }
 
 export interface FreehandPlan {
   feasible: boolean;
   reasons: Reason[];
-  entries: FreehandPlanEntry[];
   /**
-   * Tie-break to pose something: the shortest needle among entries without warnings
-   * (e.g. not over the rib cage), else among all. Geometric, not a clinical preference.
+   * Entries that pass at fine resolution, sorted by needle length. The order is a
+   * geometric sort key, not a recommendation; nothing is posed until someone picks one.
    */
-  shortest?: FreehandPlanEntry;
+  entries: RefinedFreehandEntry[];
+  /** Candidates the coarse grid found, before the fine decision. */
+  coarseCount: number;
   checkedCount: number;
 }
 
-/** Every skin grid point from which a freehand in-plane needle works with the probe at `pivot`. */
+/** Every skin entry from which a freehand in-plane needle works with the probe at `pivot`. */
 export function solveFreehandNeedle(
   pivot: THREE.Vector3,
   target: THREE.Vector3,
@@ -593,26 +680,33 @@ export function solveFreehandNeedle(
 ): FreehandPlan {
   const windows = findAcousticWindows(target, spec);
   const failures = new Map<Reason, number>();
-  const entries: FreehandPlanEntry[] = [];
+  const fail = (r: Reason | undefined) => { if (r) failures.set(r, (failures.get(r) ?? 0) + 1); };
+  const coarse: FreehandPlanEntry[] = [];
   let checkedCount = 0;
+  // Stage 1: coarse candidate search.
   for (let x = -140; x <= 140; x += stepMm) {
     for (let y = -150; y <= 150; y += stepMm) {
       const skin = getAnteriorSkinSurfacePoint(x, y);
       if (!skin || skin.z < 5) continue;
       checkedCount++;
       const result = evaluateFreehandPlan(pivot, skin, target, spec, windows, limits);
-      if (result.entry) entries.push(result.entry);
-      else if (result.reasons[0]) failures.set(result.reasons[0], (failures.get(result.reasons[0]) ?? 0) + 1);
+      if (result.entry) coarse.push(result.entry);
+      else fail(result.reasons[0]);
     }
   }
-  const clean = entries.filter(e => !e.warnings.length);
-  const shortest = (clean.length ? clean : entries).reduce<FreehandPlanEntry | undefined>(
-    (best, e) => (!best || e.needle.lengthMm < best.needle.lengthMm ? e : best), undefined);
+  // Stages 2-3: fine decision, neighbourhood robustness, margins.
+  const entries: RefinedFreehandEntry[] = [];
+  for (const candidate of coarse) {
+    const refined = refineFreehandEntry(pivot, candidate, target, spec, windows, limits);
+    if (refined) entries.push(refined);
+    else fail('needle-blind-in-liver');
+  }
+  entries.sort((a, b) => a.needle.lengthMm - b.needle.lengthMm);
   return {
     feasible: entries.length > 0,
     reasons: entries.length ? [] : summarise(failures),
     entries,
-    shortest,
+    coarseCount: coarse.length,
     checkedCount
   };
 }

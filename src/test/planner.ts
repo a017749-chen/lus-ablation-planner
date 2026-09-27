@@ -19,7 +19,9 @@ import {
   FREEHAND_LIMITS,
   IN_PLANE_TOLERANCE_DEG,
   needleProbeGapMm,
+  REFINEMENT,
   segmentDistance,
+  evaluateFreehandPlan,
   solveFreehandNeedle,
   solveGuidedNeedle
 } from '../math/portPlanner';
@@ -229,16 +231,72 @@ test('S7/S8: the guide cannot reach it, a freehand in-plane needle can, below th
   const plan = solveFreehandNeedle(SUBCOSTAL.pivotPosition, S7);
   const clean = plan.entries.filter(e => !e.warnings.length);
   assert(clean.length > 0, 'some freehand entries are not over the rib cage');
-  assert(plan.shortest && !plan.shortest.warnings.length, 'the posed entry avoids warnings when it can');
-  assert(toImage(plan.shortest.probe.pose, S7).v > 40, 'deeper than the guide line reaches');
+  assert(toImage(clean[0].probe.pose, S7).v > 40, 'deeper than the guide line reaches');
 });
 
 test('a needle aimed through the array is refused as hitting the probe; one beside it is not', () => {
   const plan = solveFreehandNeedle(SUBCOSTAL.pivotPosition, S5);
-  const pose = plan.shortest!.probe.pose;
+  const entry = plan.entries[0];
+  const pose = entry.probe.pose;
   const through = raySkinIntersection(S5, pose.arrayCenter.clone().sub(S5))!;
   assert(needleProbeGapMm(pose, through, S5) < 0, 'straight through the array face');
-  assert(needleProbeGapMm(pose, plan.shortest!.skin, S5) >= FREEHAND_LIMITS.probeClearanceMm, 'planned entry clears it');
+  assert(needleProbeGapMm(pose, entry.skin, S5) >= FREEHAND_LIMITS.probeClearanceMm, 'planned entry clears it');
+});
+
+// --- coarse search, fine decision, visible margins -------------------------------------
+
+test('no entry is called feasible unless it passes at fine resolution', () => {
+  // A 1 mm blind-length sampling let entries over the 10 mm limit through (22 of 46 for S7/S8).
+  for (const target of [S5, S2, S7]) {
+    const plan = solveFreehandNeedle(SUBCOSTAL.pivotPosition, target);
+    assert(plan.entries.length > 0, 'still feasible somewhere');
+    for (const e of plan.entries) {
+      const blind = blindIntrahepaticMm(e.probe.pose, e.skin, target, LUS_PROBE, 0.05);
+      assert(blind <= FREEHAND_LIMITS.maxBlindMm + 0.2, `fine blind ${blind.toFixed(2)} mm`);
+    }
+  }
+});
+
+test('an entry marked robust stays feasible anywhere within the skin tolerance', () => {
+  const windows = findAcousticWindows(S5);
+  const plan = solveFreehandNeedle(SUBCOSTAL.pivotPosition, S5);
+  const robust = plan.entries.filter(e => e.robust);
+  assert(robust.length > 0, 'some entries are robust');
+  let seed = 11;
+  const rand = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  for (const e of robust.slice(0, 40)) {
+    for (let k = 0; k < 3; k++) {
+      // Off-lattice points: the 1 mm refinement grid must not hide a failure between nodes.
+      const r = REFINEMENT.skinToleranceMm;
+      const p = getAnteriorSkinSurfacePoint(e.skin.x + (rand() * 2 - 1) * r, e.skin.y + (rand() * 2 - 1) * r)!;
+      const again = evaluateFreehandPlan(SUBCOSTAL.pivotPosition, p, S5, LUS_PROBE, windows,
+        FREEHAND_LIMITS, REFINEMENT.fineBlindStepMm);
+      assert(again.entry, `robust entry (${e.skin.x.toFixed(0)}, ${e.skin.y.toFixed(0)}) fails 2 mm away: ${again.reasons}`);
+    }
+  }
+  assert(plan.entries.some(e => !e.robust) || plan.coarseCount > plan.entries.length,
+    'the refinement actually changes some coarse decisions');
+});
+
+test('every entry reports each margin against its threshold', () => {
+  const plan = solveFreehandNeedle(SUBCOSTAL.pivotPosition, S7);
+  for (const e of plan.entries) {
+    const m = e.margins;
+    for (const key of ['probeGap', 'blind', 'needleBeam', 'rock', 'vessel', 'needleLength', 'flex'] as const) {
+      assert(Number.isFinite(m[key].value) && Number.isFinite(m[key].limit), `${key} present`);
+      assert(m[key].margin >= -1e-6, `${key} margin ${m[key].margin} on a feasible entry`);
+    }
+    near(m.probeGap.margin, m.probeGap.value - FREEHAND_LIMITS.probeClearanceMm, 1e-9, 'gap margin');
+    near(m.blind.margin, FREEHAND_LIMITS.maxBlindMm - m.blind.value, 1e-9, 'blind margin');
+  }
+});
+
+test('the plan lists candidates and poses nothing by itself', () => {
+  const plan = solveFreehandNeedle(SUBCOSTAL.pivotPosition, S5);
+  assert(!('shortest' in plan), 'no automatic pick');
+  for (let i = 1; i < plan.entries.length; i++) {
+    assert(plan.entries[i - 1].needle.lengthMm <= plan.entries[i].needle.lengthMm, 'sorted by needle length');
+  }
 });
 
 let failed = 0;
