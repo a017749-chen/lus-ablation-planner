@@ -1,13 +1,12 @@
 import * as THREE from 'three';
 import { ILLUSTRATIVE_LIVER_MODEL as LIVER } from '../scene/LiverLobeBuilder';
 import { ANTERIOR_SKIN_SURFACE as SKIN } from './skinSurface';
-
-/**
- * Analytic versions of the illustrative anatomy the scene draws, so planning
- * questions ("does this shaft pass through the liver?", "where does this line
- * reach the skin?") are answered exactly rather than by ray-casting meshes.
- * Illustrative geometry only - not patient anatomy.
- */
+import {
+  getPatientAnatomyContext,
+  LiverSurfaceSample,
+  onPatientAnatomyContextChange
+} from './anatomyContext';
+export type { LiverSurfaceSample } from './anatomyContext';
 
 type Lobe = { side: 'right' | 'left'; extent: number };
 const LOBES: Lobe[] = [
@@ -15,7 +14,6 @@ const LOBES: Lobe[] = [
   { side: 'left', extent: LIVER.leftExtentX }
 ];
 
-/** Normalised radius of p inside one half-ellipsoid lobe (<1 inside), or Infinity if on the other side. */
 function lobeValue(p: THREE.Vector3, lobe: Lobe): number {
   const along = lobe.side === 'right' ? LIVER.interfaceX - p.x : p.x - LIVER.interfaceX;
   if (along < 0) return Infinity;
@@ -26,19 +24,20 @@ function lobeValue(p: THREE.Vector3, lobe: Lobe): number {
   );
 }
 
-/** Smallest normalised radius over both lobes: < 1 inside the liver, 1 on its surface. */
 export function liverValue(p: THREE.Vector3): number {
   return Math.min(lobeValue(p, LOBES[0]), lobeValue(p, LOBES[1]));
 }
 
 export function isInsideLiver(p: THREE.Vector3, marginMm = 0): boolean {
-  // A margin shrinks the liver slightly so points touching the surface count as outside.
+  const patient = getPatientAnatomyContext();
+  if (patient) return patient.isInsideLiver(p, marginMm);
   const scale = 1 - marginMm / LIVER.radiusZ;
   return liverValue(p) < scale;
 }
 
-/** Outward unit normal of the lobe surface nearest in normalised radius. */
 export function liverNormal(p: THREE.Vector3): THREE.Vector3 {
+  const patient = getPatientAnatomyContext();
+  if (patient) return patient.liverNormal(p);
   const right = lobeValue(p, LOBES[0]);
   const left = lobeValue(p, LOBES[1]);
   const lobe = right <= left ? LOBES[0] : LOBES[1];
@@ -50,22 +49,13 @@ export function liverNormal(p: THREE.Vector3): THREE.Vector3 {
   ).normalize();
 }
 
-export interface LiverSurfaceSample {
-  point: THREE.Vector3;
-  normal: THREE.Vector3;
-}
-
-/**
- * Points on the outer (visible) liver surface, roughly `spacingMm` apart. The flat
- * interface between the two lobes is internal and is not sampled.
- */
-export function sampleLiverSurface(spacingMm = 3): LiverSurfaceSample[] {
+function illustrativeSurface(spacingMm: number): LiverSurfaceSample[] {
   const samples: LiverSurfaceSample[] = [];
   for (const lobe of LOBES) {
     const sign = lobe.side === 'right' ? -1 : 1;
     const longSteps = Math.max(8, Math.ceil(lobe.extent / spacingMm));
     for (let i = 0; i < longSteps; i++) {
-      const t = (i + 0.5) / longSteps; // 0 at interface, 1 at the lobe tip
+      const t = (i + 0.5) / longSteps;
       const ring = Math.sqrt(Math.max(0, 1 - t * t));
       const circumference = Math.PI * (LIVER.radiusY + LIVER.radiusZ) * ring;
       const radialSteps = Math.max(8, Math.ceil(circumference / spacingMm));
@@ -76,20 +66,58 @@ export function sampleLiverSurface(spacingMm = 3): LiverSurfaceSample[] {
           LIVER.centerY + Math.cos(angle) * LIVER.radiusY * ring,
           LIVER.centerZ + Math.sin(angle) * LIVER.radiusZ * ring
         );
-        samples.push({ point, normal: liverNormal(point) });
+        const right = lobeValue(point, LOBES[0]);
+        const left = lobeValue(point, LOBES[1]);
+        const nearest = right <= left ? LOBES[0] : LOBES[1];
+        const nearestSign = nearest.side === 'right' ? -1 : 1;
+        const normal = new THREE.Vector3(
+          nearestSign * (nearestSign * (point.x - LIVER.interfaceX)) / nearest.extent ** 2,
+          (point.y - LIVER.centerY) / LIVER.radiusY ** 2,
+          (point.z - LIVER.centerZ) / LIVER.radiusZ ** 2
+        ).normalize();
+        samples.push({ point, normal });
       }
     }
   }
   return samples;
 }
 
-/** True when the open segment a->b passes through liver tissue (ends excluded). */
+// portPlanner intentionally caches the returned array. Keep the same array object and
+// repopulate it when the active anatomy changes so a prior demo run cannot leak an
+// illustrative surface into a subsequently loaded patient case.
+const dispatchedSurfaces = new Map<number, LiverSurfaceSample[]>();
+function sourceSurface(spacingMm: number): LiverSurfaceSample[] {
+  const patient = getPatientAnatomyContext();
+  return patient ? patient.liverSurface(spacingMm) : illustrativeSurface(spacingMm);
+}
+function refreshSurface(target: LiverSurfaceSample[], spacingMm: number): void {
+  const source = sourceSurface(spacingMm);
+  target.length = 0;
+  for (const sample of source) target.push({ point: sample.point.clone(), normal: sample.normal.clone() });
+}
+
+export function sampleLiverSurface(spacingMm = 3): LiverSurfaceSample[] {
+  let target = dispatchedSurfaces.get(spacingMm);
+  if (!target) {
+    target = [];
+    dispatchedSurfaces.set(spacingMm, target);
+    refreshSurface(target, spacingMm);
+  }
+  return target;
+}
+
+onPatientAnatomyContextChange(() => {
+  for (const [spacing, target] of dispatchedSurfaces) refreshSurface(target, spacing);
+});
+
 export function segmentCrossesLiver(
   a: THREE.Vector3,
   b: THREE.Vector3,
   steps = 24,
   endClearanceMm = 2
 ): boolean {
+  const patient = getPatientAnatomyContext();
+  if (patient) return patient.segmentCrossesLiver(a, b, steps, endClearanceMm);
   const length = a.distanceTo(b);
   if (length < 1e-6) return false;
   const p = new THREE.Vector3();
@@ -103,12 +131,9 @@ export function segmentCrossesLiver(
   return false;
 }
 
-/**
- * First point where the ray origin + t*dir (t > 0) meets the anterior skin surface,
- * coming from inside the body. Returns null when the ray leaves through the
- * posterior half, which the illustrative skin does not model.
- */
 export function raySkinIntersection(origin: THREE.Vector3, dir: THREE.Vector3): THREE.Vector3 | null {
+  const patient = getPatientAnatomyContext();
+  if (patient) return patient.raySkinIntersection(origin, dir);
   const d = dir.clone().normalize();
   const o = new THREE.Vector3(
     (origin.x - SKIN.centerX) / SKIN.radiusX,
@@ -130,10 +155,6 @@ export function raySkinIntersection(origin: THREE.Vector3, dir: THREE.Vector3): 
   return null;
 }
 
-/**
- * Illustrative costal margin: the same arc AnatomyBuilder draws, from the xiphoid
- * down both costal margins. Skin points above it overlie the rib cage.
- */
 export const COSTAL_MARGIN = { halfWidthMm: 115, heightMm: 95, offsetYMm: -20, maxAngle: Math.PI * 0.45 } as const;
 
 export function costalMarginPoint(t: number): { x: number; y: number } {
@@ -143,11 +164,17 @@ export function costalMarginPoint(t: number): { x: number; y: number } {
   };
 }
 
-/** True when a skin point lies over the illustrative rib cage (cranial to the costal margin). */
 export function isOverRibCage(x: number, y: number): boolean {
+  const patient = getPatientAnatomyContext();
+  if (patient) return patient.ribCageStatus(new THREE.Vector3(x, y, 0)) === 'over';
   const s = x / COSTAL_MARGIN.halfWidthMm;
   if (Math.abs(s) >= 1) return y > COSTAL_MARGIN.offsetYMm;
   const t = Math.asin(s);
   if (Math.abs(t) > COSTAL_MARGIN.maxAngle) return y > costalMarginPoint(Math.sign(t) * COSTAL_MARGIN.maxAngle).y;
   return y > costalMarginPoint(t).y;
+}
+
+export function ribCageEvaluationAvailable(): boolean {
+  const patient = getPatientAnatomyContext();
+  return !patient || patient.ribCageStatus(new THREE.Vector3()) !== 'not-evaluable';
 }
