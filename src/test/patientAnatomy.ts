@@ -4,6 +4,7 @@ import { PatientAnatomyContext, AnatomyRlePayload } from '../math/patientAnatomy
 import '../math/patientSkinProjection';
 import {
   isInsideLiver,
+  isOverRibCage,
   ribCageEvaluationAvailable,
   sampleLiverSurface,
   segmentCrossesLiver
@@ -106,6 +107,24 @@ assertEqual(lesions.length, 1, 'one patient lesion should be exposed');
 assertEqual(lesions[0].id, 'lesion-001', 'lesion identity should be stable');
 assert(lesions[0].centroid.distanceTo(new THREE.Vector3(-1, -1, 1)) < 1e-9, 'LPS lesion centroid must map to scene L,S,-P');
 
+// Add one artificial rib column at grid i=8, k=10. Its anterior/posterior depth j
+// varies, but the skin-entry API supplies only scene X/Y. The patient implementation
+// must therefore use the exact mask's anterior projection rather than distance to Z=0.
+const ribPoints: Array<[number, number, number]> = [];
+for (let j = 2; j <= 13; j++) ribPoints.push([8, j, 10]);
+const ribPayload: AnatomyRlePayload = {
+  ...payload,
+  volume_fingerprint: 'unit-test-with-ribs',
+  structures: {...payload.structures, ribs: maskRuns(ribPoints)}
+};
+const ribContext = new PatientAnatomyContext(ribPayload);
+setPatientAnatomyContext(ribContext);
+assertEqual(ribCageEvaluationAvailable(), true, 'non-empty patient ribs should make projection evaluable');
+const ribX = -16 + 8 * 2;
+const ribY = -16 + 10 * 2; // scene Y is LPS superior Z
+assertEqual(isOverRibCage(ribX, ribY), true, 'entry projected onto a patient rib must be flagged');
+assertEqual(isOverRibCage(ribX + 10, ribY), false, 'separate projected gap must remain clear');
+
 resetPatientAnatomyContext();
 assertEqual(sampleLiverSurface(2.5), cachedSurface, 'cache array identity must also survive reset');
 assertEqual(cachedSurface.length, illustrativeLength, 'reset must repopulate original illustrative surface');
@@ -114,4 +133,4 @@ assertEqual(
   false,
   'reset must restore illustrative vessel path'
 );
-console.log('PASS patient anatomy context, skin projection, vessels and cache invalidation');
+console.log('PASS patient anatomy context, skin/rib projection, vessels and cache invalidation');

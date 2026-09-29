@@ -166,7 +166,12 @@ export function costalMarginPoint(t: number): { x: number; y: number } {
 
 export function isOverRibCage(x: number, y: number): boolean {
   const patient = getPatientAnatomyContext();
-  if (patient) return patient.ribCageStatus(new THREE.Vector3(x, y, 0)) === 'over';
+  if (patient) {
+    const status = patient.ribProjectionStatus
+      ? patient.ribProjectionStatus(x, y)
+      : patient.ribCageStatus(new THREE.Vector3(x, y, 0));
+    return status === 'over';
+  }
   const s = x / COSTAL_MARGIN.halfWidthMm;
   if (Math.abs(s) >= 1) return y > COSTAL_MARGIN.offsetYMm;
   const t = Math.asin(s);
@@ -176,5 +181,9 @@ export function isOverRibCage(x: number, y: number): boolean {
 
 export function ribCageEvaluationAvailable(): boolean {
   const patient = getPatientAnatomyContext();
-  return !patient || patient.ribCageStatus(new THREE.Vector3()) !== 'not-evaluable';
+  if (!patient) return true;
+  const status = patient.ribProjectionStatus
+    ? patient.ribProjectionStatus(0, 0)
+    : patient.ribCageStatus(new THREE.Vector3());
+  return status !== 'not-evaluable';
 }
