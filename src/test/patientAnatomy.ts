@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { strict as assert } from 'node:assert';
 import { setPatientAnatomyContext, resetPatientAnatomyContext } from '../math/anatomyContext';
 import { PatientAnatomyContext, AnatomyRlePayload } from '../math/patientAnatomy';
 import '../math/patientSkinProjection';
@@ -11,6 +10,16 @@ import {
 } from '../math/anatomyShapes';
 import { getAnteriorSkinSurfacePoint } from '../math/skinSurface';
 import { CollisionDetector } from '../math/collision';
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+function assertEqual<T>(actual: T, expected: T, message: string) {
+  assert(actual === expected, `${message}: expected ${String(expected)}, got ${String(actual)}`);
+}
+function assertNotEqual<T>(actual: T, expected: T, message: string) {
+  assert(actual !== expected, `${message}: both were ${String(actual)}`);
+}
 
 const shape: [number, number, number] = [16, 16, 16];
 const linear = (i: number, j: number, k: number) => (i * shape[1] + j) * shape[2] + k;
@@ -67,38 +76,42 @@ const payload: AnatomyRlePayload = {
 console.log('Patient anatomy context');
 const cachedSurface = sampleLiverSurface(2.5);
 const illustrativeLength = cachedSurface.length;
-assert(illustrativeLength > 0);
+assert(illustrativeLength > 0, 'illustrative surface must be non-empty');
 
 const context = new PatientAnatomyContext(payload);
 setPatientAnatomyContext(context);
 
-assert.equal(sampleLiverSurface(2.5), cachedSurface, 'cached surface array identity must stay stable');
-assert.notEqual(cachedSurface.length, illustrativeLength, 'cached contents must refresh to patient liver surface');
-assert.equal(isInsideLiver(new THREE.Vector3(0, 0, 0)), true);
-assert.equal(isInsideLiver(new THREE.Vector3(25, 25, 25)), false);
-assert.equal(segmentCrossesLiver(new THREE.Vector3(0, 0, 15), new THREE.Vector3(0, 0, -10)), true);
+assertEqual(sampleLiverSurface(2.5), cachedSurface, 'cached surface array identity must stay stable');
+assertNotEqual(cachedSurface.length, illustrativeLength, 'cached contents must refresh to patient liver surface');
+assertEqual(isInsideLiver(new THREE.Vector3(0, 0, 0)), true, 'origin should be inside patient liver cube');
+assertEqual(isInsideLiver(new THREE.Vector3(25, 25, 25)), false, 'far point should be outside patient liver');
+assertEqual(segmentCrossesLiver(new THREE.Vector3(0, 0, 15), new THREE.Vector3(0, 0, -10)), true, 'segment should cross patient liver');
 
 const skin = getAnteriorSkinSurfacePoint(0, 0);
 assert(skin, 'patient body mask must provide an anterior skin point');
-assert(Math.abs(skin!.z - 15) < 2.5, `unexpected anterior skin z=${skin!.z}`);
-assert.equal(ribCageEvaluationAvailable(), false, 'ribs absent must be reported as not evaluable');
+assert(Math.abs(skin.z - 15) < 2.5, `unexpected anterior skin z=${skin.z}`);
+assertEqual(ribCageEvaluationAvailable(), false, 'ribs absent must be reported as not evaluable');
 
 const collision = CollisionDetector.checkCollision(
   new THREE.Vector3(4, 0, 15),
   new THREE.Vector3(4, 0, -10)
 );
-assert.equal(collision.patientSpecific, true);
-assert.equal(collision.closestVesselType, 'portal_vein');
+assertEqual(collision.patientSpecific, true, 'collision must use patient vessel masks');
+assertEqual(collision.closestVesselType, 'portal_vein', 'closest structure should remain portal vein');
 assert(collision.minDistance <= 5, `expected near-PV path, got ${collision.minDistance}`);
-assert.equal(collision.clinicalSafetyEstablished, false);
+assertEqual(collision.clinicalSafetyEstablished, false, 'geometry must not establish clinical safety');
 
 const lesions = context.lesions();
-assert.equal(lesions.length, 1);
-assert.equal(lesions[0].id, 'lesion-001');
-assert(lesions[0].centroid.distanceTo(new THREE.Vector3(-1, -1, 1)) < 1e-9);
+assertEqual(lesions.length, 1, 'one patient lesion should be exposed');
+assertEqual(lesions[0].id, 'lesion-001', 'lesion identity should be stable');
+assert(lesions[0].centroid.distanceTo(new THREE.Vector3(-1, -1, 1)) < 1e-9, 'LPS lesion centroid must map to scene L,S,-P');
 
 resetPatientAnatomyContext();
-assert.equal(sampleLiverSurface(2.5), cachedSurface);
-assert.equal(cachedSurface.length, illustrativeLength, 'reset must repopulate original illustrative surface');
-assert.equal(CollisionDetector.checkCollision(new THREE.Vector3(4, 0, 15), new THREE.Vector3(4, 0, -10)).patientSpecific, false);
+assertEqual(sampleLiverSurface(2.5), cachedSurface, 'cache array identity must also survive reset');
+assertEqual(cachedSurface.length, illustrativeLength, 'reset must repopulate original illustrative surface');
+assertEqual(
+  CollisionDetector.checkCollision(new THREE.Vector3(4, 0, 15), new THREE.Vector3(4, 0, -10)).patientSpecific,
+  false,
+  'reset must restore illustrative vessel path'
+);
 console.log('PASS patient anatomy context, skin projection, vessels and cache invalidation');
