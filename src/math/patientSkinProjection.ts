@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { PatientAnatomyContext } from './patientAnatomy';
+import './patientRibProjection';
 
 declare module './patientAnatomy' {
   interface PatientAnatomyContext {
