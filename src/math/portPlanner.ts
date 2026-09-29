@@ -9,6 +9,7 @@ import {
   sampleLiverSurface,
   segmentCrossesLiver
 } from './anatomyShapes';
+import { getPatientAnatomyContext } from './anatomyContext';
 import { CollisionDetector } from './collision';
 import { getAnteriorSkinSurfaceNormal, getAnteriorSkinSurfacePoint } from './skinSurface';
 import { guideLateralAtDepth, guideLine, isInLinearImage, poseFromParts, ProbePose, toImage } from './sideViewProbe';
@@ -19,7 +20,8 @@ import { guideLateralAtDepth, guideLine, isInLinearImage, poseFromParts, ProbePo
  * It answers "can this skin point work, and if not, why" - it never ranks or
  * recommends. Where one geometric solution must be picked to pose the probe, the
  * tie-breaker (least tip flex) is stated as a geometric choice, not a clinical one.
- * Illustrative geometry only.
+ * Illustrative geometry is the demo default; reviewed patient masks override anatomy
+ * queries when patient mode is active.
  */
 
 export interface AcousticWindow {
@@ -75,18 +77,20 @@ export type Reason =
   | 'needle-tilt'
   | 'flex-limit'
   | 'shaft-through-liver'
+  | 'shaft-through-rib'
   | 'guide-misses-target'
   | 'guide-too-deep'
   | 'no-skin-exit'
   | 'needle-too-long'
   | 'vessel-too-close'
+  | 'needle-through-rib'
   | 'needle-crosses-liver-before-hole'
   | 'target-not-centerable'
   | 'needle-hits-probe'
   | 'needle-blind-in-liver'
   | 'needle-too-steep';
 
-export type Warning = 'over-rib-cage' | 'needle-near-beam-axis';
+export type Warning = 'over-rib-cage' | 'needle-near-beam-axis' | 'rib-path-not-evaluable';
 
 export const REASON_TEXT: Record<Reason | Warning, string> = {
   'no-window': '肝表面找不到能讓腫瘤進入影像的聲窗',
@@ -96,18 +100,21 @@ export const REASON_TEXT: Record<Reason | Warning, string> = {
   'needle-tilt': '針與皮膚夾角太斜',
   'flex-limit': '尖端需要彎超過上限',
   'shaft-through-liver': '探頭桿會穿過肝臟',
+  'shaft-through-rib': '探頭／套管路徑與病人肋骨分割相交',
   'guide-misses-target': '導引線對不到腫瘤',
   'guide-too-deep': '腫瘤超出導引線在影像內的深度範圍',
   'no-skin-exit': '導引線往回延伸碰不到前腹壁',
   'needle-too-long': '針長不夠',
   'vessel-too-close': '針道距血管太近',
+  'needle-through-rib': '針道與病人肋骨分割相交',
   'needle-crosses-liver-before-hole': '針在到達導引孔前就穿過肝臟',
   'target-not-centerable': '沒有任何聲窗的影像面能同時包含這條針道',
   'needle-hits-probe': '針會碰到探頭（要從探頭尖端旁邊進肝）',
   'needle-blind-in-liver': '針在肝內有一段跑在影像外，看不到',
   'needle-too-steep': '針太接近聲束方向，影像上看不清楚',
   'over-rib-cage': '在肋骨區上方（需經肋間）',
-  'needle-near-beam-axis': '針幾乎與聲束平行，影像上不易看見'
+  'needle-near-beam-axis': '針幾乎與聲束平行，影像上不易看見',
+  'rib-path-not-evaluable': '未提供 patient-specific ribs，完整肋骨路徑碰撞不可評估'
 };
 
 export interface ProbeSolution {
@@ -131,7 +138,7 @@ export function skinTiltDeg(skin: THREE.Vector3, inward: THREE.Vector3): number 
   return THREE.MathUtils.radToDeg(inward.clone().normalize().angleTo(normal.negate()));
 }
 
-/** True when a point lies under the anterior abdominal wall (inside the illustrative body). */
+/** True when a point lies under the active anterior abdominal wall. */
 function isUnderSkin(p: THREE.Vector3): boolean {
   const skin = getAnteriorSkinSurfacePoint(p.x, p.y);
   return !!skin && p.z < skin.z - 1;
@@ -158,6 +165,10 @@ function tryPose(
   if (pose.flexDeg > spec.maxFlexDeg) return { reason: 'flex-limit' };
   if (segmentCrossesLiver(pivot, joint) || segmentCrossesLiver(joint, window.point, 8, 1)) {
     return { reason: 'shaft-through-liver' };
+  }
+  const patient = getPatientAnatomyContext();
+  if (patient?.ribPathStatus?.(pivot, joint, spec.shaftDiameterMm / 2) === 'crosses') {
+    return { reason: 'shaft-through-rib' };
   }
   return { pose };
 }
@@ -187,6 +198,13 @@ export function evaluateProbePort(
   windows: AcousticWindow[] = findAcousticWindows(target, spec)
 ): ProbePortResult {
   const warnings: Warning[] = isOverRibCage(pivot.x, pivot.y) ? ['over-rib-cage'] : [];
+  const patient = getPatientAnatomyContext();
+  if (patient) {
+    const ribStatus = patient.ribProjectionStatus
+      ? patient.ribProjectionStatus(pivot.x, pivot.y)
+      : patient.ribCageStatus(pivot);
+    if (ribStatus === 'not-evaluable') warnings.push('rib-path-not-evaluable');
+  }
   if (!windows.length) return { feasible: false, reasons: ['no-window'], warnings, feasibleWindowCount: 0 };
   const failures = new Map<Reason, number>();
   let best: ProbeSolution | undefined;
@@ -235,6 +253,14 @@ export function checkNeedlePath(
   if (skinTiltDeg(skin, target.clone().sub(skin)) > needle.maxSkinTiltDeg) reasons.push('needle-tilt');
   const collision = CollisionDetector.checkCollision(skin, target);
   if (collision.minDistance < needle.vesselClearanceMm) reasons.push('vessel-too-close');
+  const patient = getPatientAnatomyContext();
+  if (patient) {
+    const ribPath = patient.ribPathStatus
+      ? patient.ribPathStatus(skin, target, CollisionDetector.NEEDLE_RADIUS_MM)
+      : 'not-evaluable';
+    if (ribPath === 'crosses') reasons.push('needle-through-rib');
+    else if (ribPath === 'not-evaluable') warnings.push('rib-path-not-evaluable');
+  }
   if (isOverRibCage(skin.x, skin.y)) warnings.push('over-rib-cage');
   return {
     feasible: reasons.length === 0,

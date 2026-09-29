@@ -5,12 +5,14 @@ import '../math/patientSkinProjection';
 import {
   isInsideLiver,
   isOverRibCage,
+  liverValue,
   ribCageEvaluationAvailable,
   sampleLiverSurface,
   segmentCrossesLiver
 } from '../math/anatomyShapes';
 import { getAnteriorSkinSurfacePoint } from '../math/skinSurface';
 import { CollisionDetector } from '../math/collision';
+import { checkNeedlePath } from '../math/portPlanner';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -92,6 +94,8 @@ const skin = getAnteriorSkinSurfacePoint(0, 0);
 assert(skin, 'patient body mask must provide an anterior skin point');
 assert(Math.abs(skin.z - 15) < 2.5, `unexpected anterior skin z=${skin.z}`);
 assertEqual(ribCageEvaluationAvailable(), false, 'ribs absent must be reported as not evaluable');
+const noRibNeedle = checkNeedlePath(skin, new THREE.Vector3(0, 0, 0));
+assert(noRibNeedle.warnings.includes('rib-path-not-evaluable'), 'missing patient ribs must remain explicit in needle assessment');
 
 const collision = CollisionDetector.checkCollision(
   new THREE.Vector3(4, 0, 15),
@@ -107,9 +111,24 @@ assertEqual(lesions.length, 1, 'one patient lesion should be exposed');
 assertEqual(lesions[0].id, 'lesion-001', 'lesion identity should be stable');
 assert(lesions[0].centroid.distanceTo(new THREE.Vector3(-1, -1, 1)) < 1e-9, 'LPS lesion centroid must map to scene L,S,-P');
 
-// Add one artificial rib column at grid i=8, k=10. Its anterior/posterior depth j
-// varies, but the skin-entry API supplies only scene X/Y. The patient implementation
-// must therefore use the exact mask's anterior projection rather than distance to Z=0.
+// Put the same binary liver grid hundreds of millimetres away from the illustrative
+// liver. Patient-mode liverValue still has to follow the mask (<1 inside), otherwise
+// freehand blind-length calculations would silently fall back to demo anatomy.
+const shiftedPayload: AnatomyRlePayload = {
+  ...payload,
+  volume_fingerprint: 'unit-test-shifted-liver',
+  planning_grid: {...payload.planning_grid, origin_lps_mm: [200, 200, 200]}
+};
+const shiftedContext = new PatientAnatomyContext(shiftedPayload);
+setPatientAnatomyContext(shiftedContext);
+const shiftedInsideScene = new THREE.Vector3(214, 214, -214);
+assertEqual(shiftedContext.isInsideLiver(shiftedInsideScene), true, 'shifted point must be inside patient liver mask');
+assert(liverValue(shiftedInsideScene) < 1, 'liverValue must use patient mask rather than illustrative lobes');
+setPatientAnatomyContext(context);
+
+// One artificial rib column at grid i=8, k=10 and depths j=2..13. The entry API
+// only sees scene X/Y, while the full path test must also catch an oblique needle that
+// begins in a projected gap but crosses the rib at a deeper anterior/posterior level.
 const ribPoints: Array<[number, number, number]> = [];
 for (let j = 2; j <= 13; j++) ribPoints.push([8, j, 10]);
 const ribPayload: AnatomyRlePayload = {
@@ -125,6 +144,22 @@ const ribY = -16 + 10 * 2; // scene Y is LPS superior Z
 assertEqual(isOverRibCage(ribX, ribY), true, 'entry projected onto a patient rib must be flagged');
 assertEqual(isOverRibCage(ribX + 10, ribY), false, 'separate projected gap must remain clear');
 
+const directStart = new THREE.Vector3(ribX, ribY, 15);
+const directEnd = new THREE.Vector3(ribX, ribY, -10);
+assertEqual(ribContext.ribPathStatus(directStart, directEnd, 0.8), 'crosses', 'straight path through rib must be detected');
+
+const gapStart = new THREE.Vector3(ribX + 10, ribY, 15);
+const obliqueEnd = new THREE.Vector3(ribX - 10, ribY, -10);
+assertEqual(isOverRibCage(gapStart.x, gapStart.y), false, 'oblique test must start in an intercostal projected gap');
+assertEqual(ribContext.ribPathStatus(gapStart, obliqueEnd, 0.8), 'crosses', 'oblique path from a gap must still detect deeper rib collision');
+const ribNeedle = checkNeedlePath(gapStart, obliqueEnd);
+assert(ribNeedle.reasons.includes('needle-through-rib'), 'planner must reject a patient needle path that crosses ribs');
+assert(!ribNeedle.warnings.includes('rib-path-not-evaluable'), 'available rib anatomy must not be reported as missing');
+
+const clearStart = new THREE.Vector3(ribX + 10, ribY + 8, 15);
+const clearEnd = new THREE.Vector3(ribX + 10, ribY + 8, -10);
+assertEqual(ribContext.ribPathStatus(clearStart, clearEnd, 0.8), 'clear', 'separate 3D path should stay clear of rib mask');
+
 resetPatientAnatomyContext();
 assertEqual(sampleLiverSurface(2.5), cachedSurface, 'cache array identity must also survive reset');
 assertEqual(cachedSurface.length, illustrativeLength, 'reset must repopulate original illustrative surface');
@@ -133,4 +168,4 @@ assertEqual(
   false,
   'reset must restore illustrative vessel path'
 );
-console.log('PASS patient anatomy context, skin/rib projection, vessels and cache invalidation');
+console.log('PASS patient anatomy context, patient liver containment, skin/rib projection, 3D rib path, vessels and cache invalidation');

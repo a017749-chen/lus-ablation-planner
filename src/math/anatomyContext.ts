@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 export type RibCageStatus = 'over' | 'clear' | 'not-evaluable';
+export type RibPathStatus = 'crosses' | 'clear' | 'not-evaluable';
 export type VascularStructure = 'portal_vein' | 'hepatic_vein' | 'ivc';
 
 export interface LiverSurfaceSample {
@@ -15,7 +16,6 @@ export interface AnatomyLesion {
 }
 
 export interface VesselClearanceResult {
-  /** Conservative shaft-to-segmented-vessel surface lower bound in millimetres. */
   minimumLowerBoundMm: number;
   closestStructure: VascularStructure | 'none';
   closestName: string;
@@ -37,13 +37,10 @@ export interface AnatomyContext {
   anteriorSkinPoint?(x: number, y: number, offsetMm?: number): THREE.Vector3 | null;
   skinNormal(point: THREE.Vector3): THREE.Vector3 | null;
   isUnderSkin(point: THREE.Vector3): boolean;
-  /** Legacy 3-D rib proximity query retained for compatibility. */
   ribCageStatus(point: THREE.Vector3): RibCageStatus;
-  /**
-   * Patient anterior-projection rib footprint. This is the query used by skin-entry
-   * planning because the caller supplies only scene X/Y, not rib depth.
-   */
   ribProjectionStatus?(x: number, y: number): RibCageStatus;
+  /** Conservative straight-path overlap against rib voxels for an instrument radius. */
+  ribPathStatus?(start: THREE.Vector3, end: THREE.Vector3, radiusMm?: number): RibPathStatus;
   vesselClearance(start: THREE.Vector3, end: THREE.Vector3, needleRadiusMm?: number): VesselClearanceResult;
   lesions(): AnatomyLesion[];
 }
@@ -71,9 +68,6 @@ export function onPatientAnatomyContextChange(listener: ContextListener): () => 
   return () => listeners.delete(listener);
 }
 
-// This module is already part of the original planner dependency graph. Bootstrapping
-// the optional patient loader here avoids changing the large main.ts application and
-// does nothing in Node/test environments.
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   queueMicrotask(() => { void import('../patientMode'); });
 }
