@@ -37,7 +37,13 @@ export interface AnatomyContext {
   anteriorSkinPoint?(x: number, y: number, offsetMm?: number): THREE.Vector3 | null;
   skinNormal(point: THREE.Vector3): THREE.Vector3 | null;
   isUnderSkin(point: THREE.Vector3): boolean;
+  /** Legacy 3-D rib proximity query retained for compatibility. */
   ribCageStatus(point: THREE.Vector3): RibCageStatus;
+  /**
+   * Patient anterior-projection rib footprint. This is the query used by skin-entry
+   * planning because the caller supplies only scene X/Y, not rib depth.
+   */
+  ribProjectionStatus?(x: number, y: number): RibCageStatus;
   vesselClearance(start: THREE.Vector3, end: THREE.Vector3, needleRadiusMm?: number): VesselClearanceResult;
   lesions(): AnatomyLesion[];
 }
