@@ -5,6 +5,7 @@ import '../math/patientSkinProjection';
 import {
   isInsideLiver,
   isOverRibCage,
+  liverValue,
   ribCageEvaluationAvailable,
   sampleLiverSurface,
   segmentCrossesLiver
@@ -110,6 +111,21 @@ assertEqual(lesions.length, 1, 'one patient lesion should be exposed');
 assertEqual(lesions[0].id, 'lesion-001', 'lesion identity should be stable');
 assert(lesions[0].centroid.distanceTo(new THREE.Vector3(-1, -1, 1)) < 1e-9, 'LPS lesion centroid must map to scene L,S,-P');
 
+// Put the same binary liver grid hundreds of millimetres away from the illustrative
+// liver. Patient-mode liverValue still has to follow the mask (<1 inside), otherwise
+// freehand blind-length calculations would silently fall back to demo anatomy.
+const shiftedPayload: AnatomyRlePayload = {
+  ...payload,
+  volume_fingerprint: 'unit-test-shifted-liver',
+  planning_grid: {...payload.planning_grid, origin_lps_mm: [200, 200, 200]}
+};
+const shiftedContext = new PatientAnatomyContext(shiftedPayload);
+setPatientAnatomyContext(shiftedContext);
+const shiftedInsideScene = new THREE.Vector3(214, 214, -214);
+assertEqual(shiftedContext.isInsideLiver(shiftedInsideScene), true, 'shifted point must be inside patient liver mask');
+assert(liverValue(shiftedInsideScene) < 1, 'liverValue must use patient mask rather than illustrative lobes');
+setPatientAnatomyContext(context);
+
 // One artificial rib column at grid i=8, k=10 and depths j=2..13. The entry API
 // only sees scene X/Y, while the full path test must also catch an oblique needle that
 // begins in a projected gap but crosses the rib at a deeper anterior/posterior level.
@@ -152,4 +168,4 @@ assertEqual(
   false,
   'reset must restore illustrative vessel path'
 );
-console.log('PASS patient anatomy context, skin/rib projection, 3D rib path, vessels and cache invalidation');
+console.log('PASS patient anatomy context, patient liver containment, skin/rib projection, 3D rib path, vessels and cache invalidation');
