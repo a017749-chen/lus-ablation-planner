@@ -24,7 +24,14 @@ function lobeValue(p: THREE.Vector3, lobe: Lobe): number {
   );
 }
 
+/**
+ * Demo mode returns the original continuous half-ellipsoid value. Patient mode only
+ * needs the <1 / >=1 containment contract used by planner code, so it is derived from
+ * the reviewed binary liver mask instead of leaking illustrative anatomy back in.
+ */
 export function liverValue(p: THREE.Vector3): number {
+  const patient = getPatientAnatomyContext();
+  if (patient) return patient.isInsideLiver(p, 0) ? 0 : Infinity;
   return Math.min(lobeValue(p, LOBES[0]), lobeValue(p, LOBES[1]));
 }
 
