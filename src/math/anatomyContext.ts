@@ -16,7 +16,6 @@ export interface AnatomyLesion {
 }
 
 export interface VesselClearanceResult {
-  /** Conservative shaft-to-segmented-vessel surface lower bound in millimetres. */
   minimumLowerBoundMm: number;
   closestStructure: VascularStructure | 'none';
   closestName: string;
@@ -38,12 +37,10 @@ export interface AnatomyContext {
   anteriorSkinPoint?(x: number, y: number, offsetMm?: number): THREE.Vector3 | null;
   skinNormal(point: THREE.Vector3): THREE.Vector3 | null;
   isUnderSkin(point: THREE.Vector3): boolean;
-  /** Legacy 3-D rib proximity query retained for compatibility. */
   ribCageStatus(point: THREE.Vector3): RibCageStatus;
-  /** Patient anterior-projection rib footprint for skin-entry X/Y checks. */
   ribProjectionStatus?(x: number, y: number): RibCageStatus;
-  /** Full 3-D straight-path crossing against the reviewed patient rib mask. */
-  ribPathStatus?(start: THREE.Vector3, end: THREE.Vector3): RibPathStatus;
+  /** Conservative straight-path overlap against rib voxels for an instrument radius. */
+  ribPathStatus?(start: THREE.Vector3, end: THREE.Vector3, radiusMm?: number): RibPathStatus;
   vesselClearance(start: THREE.Vector3, end: THREE.Vector3, needleRadiusMm?: number): VesselClearanceResult;
   lesions(): AnatomyLesion[];
 }
