@@ -1,15 +1,12 @@
 import * as THREE from 'three';
 import { ILLUSTRATIVE_LIVER_MODEL as LIVER } from '../scene/LiverLobeBuilder';
 import { ANTERIOR_SKIN_SURFACE as SKIN } from './skinSurface';
-import { getPatientAnatomyContext, LiverSurfaceSample } from './anatomyContext';
+import {
+  getPatientAnatomyContext,
+  LiverSurfaceSample,
+  onPatientAnatomyContextChange
+} from './anatomyContext';
 export type { LiverSurfaceSample } from './anatomyContext';
-
-/**
- * Analytic illustrative anatomy with an explicit patient-context override.
- *
- * No patient context: original half-ellipsoid / analytic skin behaviour is preserved.
- * Reviewed patient context active: planning queries are delegated to voxel masks.
- */
 
 type Lobe = { side: 'right' | 'left'; extent: number };
 const LOBES: Lobe[] = [
@@ -27,7 +24,6 @@ function lobeValue(p: THREE.Vector3, lobe: Lobe): number {
   );
 }
 
-/** Illustrative normalised radius only. Patient mode should use isInsideLiver. */
 export function liverValue(p: THREE.Vector3): number {
   return Math.min(lobeValue(p, LOBES[0]), lobeValue(p, LOBES[1]));
 }
@@ -53,9 +49,7 @@ export function liverNormal(p: THREE.Vector3): THREE.Vector3 {
   ).normalize();
 }
 
-export function sampleLiverSurface(spacingMm = 3): LiverSurfaceSample[] {
-  const patient = getPatientAnatomyContext();
-  if (patient) return patient.liverSurface(spacingMm);
+function illustrativeSurface(spacingMm: number): LiverSurfaceSample[] {
   const samples: LiverSurfaceSample[] = [];
   for (const lobe of LOBES) {
     const sign = lobe.side === 'right' ? -1 : 1;
@@ -72,12 +66,49 @@ export function sampleLiverSurface(spacingMm = 3): LiverSurfaceSample[] {
           LIVER.centerY + Math.cos(angle) * LIVER.radiusY * ring,
           LIVER.centerZ + Math.sin(angle) * LIVER.radiusZ * ring
         );
-        samples.push({ point, normal: liverNormal(point) });
+        const right = lobeValue(point, LOBES[0]);
+        const left = lobeValue(point, LOBES[1]);
+        const nearest = right <= left ? LOBES[0] : LOBES[1];
+        const nearestSign = nearest.side === 'right' ? -1 : 1;
+        const normal = new THREE.Vector3(
+          nearestSign * (nearestSign * (point.x - LIVER.interfaceX)) / nearest.extent ** 2,
+          (point.y - LIVER.centerY) / LIVER.radiusY ** 2,
+          (point.z - LIVER.centerZ) / LIVER.radiusZ ** 2
+        ).normalize();
+        samples.push({ point, normal });
       }
     }
   }
   return samples;
 }
+
+// portPlanner intentionally caches the returned array. Keep the same array object and
+// repopulate it when the active anatomy changes so a prior demo run cannot leak an
+// illustrative surface into a subsequently loaded patient case.
+const dispatchedSurfaces = new Map<number, LiverSurfaceSample[]>();
+function sourceSurface(spacingMm: number): LiverSurfaceSample[] {
+  const patient = getPatientAnatomyContext();
+  return patient ? patient.liverSurface(spacingMm) : illustrativeSurface(spacingMm);
+}
+function refreshSurface(target: LiverSurfaceSample[], spacingMm: number): void {
+  const source = sourceSurface(spacingMm);
+  target.length = 0;
+  for (const sample of source) target.push({ point: sample.point.clone(), normal: sample.normal.clone() });
+}
+
+export function sampleLiverSurface(spacingMm = 3): LiverSurfaceSample[] {
+  let target = dispatchedSurfaces.get(spacingMm);
+  if (!target) {
+    target = [];
+    dispatchedSurfaces.set(spacingMm, target);
+    refreshSurface(target, spacingMm);
+  }
+  return target;
+}
+
+onPatientAnatomyContextChange(() => {
+  for (const [spacing, target] of dispatchedSurfaces) refreshSurface(target, spacing);
+});
 
 export function segmentCrossesLiver(
   a: THREE.Vector3,
@@ -143,7 +174,6 @@ export function isOverRibCage(x: number, y: number): boolean {
   return y > costalMarginPoint(t).y;
 }
 
-/** Explicit capability signal so patient mode never implies an unavailable rib check ran. */
 export function ribCageEvaluationAvailable(): boolean {
   const patient = getPatientAnatomyContext();
   return !patient || patient.ribCageStatus(new THREE.Vector3()) !== 'not-evaluable';
