@@ -19,9 +19,12 @@ require.extensions['.ts'] = (module, filename) => {
 
 // Each file runs even if an earlier one fails, so one broken area cannot hide another.
 let failures = 0;
-for (const file of ['../src/test/verify.ts', '../src/test/planner.ts']) {
-  console.log(`
-### ${file}`);
+for (const file of [
+  '../src/test/verify.ts',
+  '../src/test/planner.ts',
+  '../src/test/patientAnatomy.ts'
+]) {
+  console.log(`\n### ${file}`);
   try {
     require(file);
     if (process.exitCode) failures++;
@@ -32,5 +35,4 @@ for (const file of ['../src/test/verify.ts', '../src/test/planner.ts']) {
   }
 }
 process.exitCode = failures ? 1 : 0;
-if (failures) console.log(`
-${failures} test file(s) failed.`);
+if (failures) console.log(`\n${failures} test file(s) failed.`);
