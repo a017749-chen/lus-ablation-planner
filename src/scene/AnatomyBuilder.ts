@@ -4,6 +4,7 @@ import { TROCAR_PRESETS } from '../config/presets';
 import { ANTERIOR_SKIN_SURFACE, getAnteriorSkinSurfaceNormal, getAnteriorSkinSurfacePoint } from '../math/skinSurface';
 import { COSTAL_MARGIN, costalMarginPoint } from '../math/anatomyShapes';
 import { buildIllustrativeLobes } from './LiverLobeBuilder';
+import { CouinaudBuilder, CouinaudVisualElements } from './CouinaudSegments';
 
 export interface AnatomyMeshes {
   group: THREE.Group;
@@ -18,10 +19,12 @@ export interface AnatomyMeshes {
   marginMesh: THREE.Mesh;
   vesselsGroup: THREE.Group;
   vesselMeshes: Map<string, THREE.Mesh>;
+  couinaud: CouinaudVisualElements;
   updateTumor(position: THREE.Vector3, diameter: number, margin: number): void;
   setVesselAlert(isAlert: boolean): void;
   setSkinOpacity(opacity: number): void;
   updatePercutaneousIncision(position: THREE.Vector3): void;
+  setCouinaudVisible(visible: boolean): void;
 }
 
 export class AnatomyBuilder {
@@ -278,6 +281,20 @@ export class AnatomyBuilder {
 
     addPatientSideLabel('R', -128);
     addPatientSideLabel('L', 128);
+
+    // Gallbladder landmark label
+    const gbLabel = new THREE.Group();
+    gbLabel.name = 'GallbladderLabel';
+    gbLabel.userData.isPatientSideBillboard = true;
+    gbLabel.position.set(-12, -43, 23);
+    const gbBadge = new THREE.Mesh(
+      new THREE.CircleGeometry(6, 20),
+      new THREE.MeshBasicMaterial({ color: 0x43a047, transparent: true, opacity: 0.35, depthTest: false })
+    );
+    gbBadge.renderOrder = 10;
+    gbLabel.add(gbBadge);
+    landmarks.add(gbLabel);
+
     group.add(landmarks);
 
     // 4. Illustrative hepatic lobes; these are not Couinaud segment masks.
@@ -302,6 +319,10 @@ export class AnatomyBuilder {
     liverGroup.add(domeCover);
 
     group.add(liverGroup);
+
+    // 4b. Couinaud Segments (I~VIII), Gallbladder & Falciform Ligament
+    const couinaud = CouinaudBuilder.build();
+    group.add(couinaud.group);
 
     // 5. Target Tumor & Safety Margin
     const tumorGeom = new THREE.SphereGeometry(10, 32, 24); // 20mm default diameter
@@ -415,10 +436,12 @@ export class AnatomyBuilder {
       marginMesh,
       vesselsGroup,
       vesselMeshes,
+      couinaud,
       updateTumor,
       setVesselAlert,
       setSkinOpacity,
-      updatePercutaneousIncision
+      updatePercutaneousIncision,
+      setCouinaudVisible: (visible: boolean) => couinaud.setVisible(visible)
     };
   }
 }

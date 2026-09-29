@@ -36,7 +36,7 @@ import {
   solveFreehandNeedle,
   solveGuidedNeedle
 } from './math/portPlanner';
-import { raySkinIntersection } from './math/anatomyShapes';
+import { evaluateArrayAcousticCoupling, raySkinIntersection } from './math/anatomyShapes';
 
 class SurgicalPlannerApp {
   private scene: THREE.Scene;
@@ -1147,6 +1147,37 @@ class SurgicalPlannerApp {
     if (needleDepthElem) {
       needleDepthElem.textContent = `${this.needleDepth.toFixed(1)} mm`;
     }
+
+    // 4. Acoustic Coupling Live Telemetry
+    const probePose = this.instruments.getProbePose();
+    const coupBadge = document.getElementById('probe-coupling-badge');
+    const coupGap = document.getElementById('probe-coupling-gap');
+    const coupDiv = document.getElementById('probe-coupling-div');
+    if (probePose && coupBadge && coupGap && coupDiv) {
+      const coupling = evaluateArrayAcousticCoupling(
+        probePose.arrayCenter,
+        probePose.arrayAxis,
+        probePose.beamDir,
+        LUS_PROBE.image.widthMm,
+        LUS_PROBE.coupling?.maxArrayEndGapMm ?? 3.5,
+        LUS_PROBE.coupling?.maxNormalDivergenceDeg ?? 42.0
+      );
+      coupGap.textContent = `${coupling.maxGapMm.toFixed(1)} mm`;
+      coupDiv.textContent = `${coupling.maxDivergenceDeg.toFixed(0)}°`;
+      if (coupling.isOverhang) {
+        coupBadge.className = 'font-bold px-1.5 py-0.5 rounded bg-rose-950 text-rose-300';
+        coupBadge.textContent = '邊緣懸空 (無接觸)';
+      } else if (!coupling.hasCoupling) {
+        coupBadge.className = 'font-bold px-1.5 py-0.5 rounded bg-amber-950 text-amber-300';
+        coupBadge.textContent = '貼合不良 (曲率過大)';
+      } else if (coupling.maxGapMm > 2.0 || coupling.maxDivergenceDeg > 28) {
+        coupBadge.className = 'font-bold px-1.5 py-0.5 rounded bg-yellow-950 text-yellow-300';
+        coupBadge.textContent = '尚可 (建議注水加強)';
+      } else {
+        coupBadge.className = 'font-bold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300';
+        coupBadge.textContent = '良好 (緊密接觸)';
+      }
+    }
   }
 
   /**
@@ -1196,6 +1227,15 @@ class SurgicalPlannerApp {
     });
     document.getElementById('layer-liver')?.addEventListener('change', (e) => {
       this.anatomy.liverGroup.visible = (e.target as HTMLInputElement).checked;
+    });
+    document.getElementById('layer-couinaud')?.addEventListener('change', (e) => {
+      this.anatomy.setCouinaudVisible((e.target as HTMLInputElement).checked);
+    });
+    document.getElementById('layer-landmarks')?.addEventListener('change', (e) => {
+      const isChecked = (e.target as HTMLInputElement).checked;
+      this.anatomy.couinaud.gallbladder.visible = isChecked;
+      this.anatomy.couinaud.falciformLigament.visible = isChecked;
+      this.anatomy.landmarks.visible = isChecked;
     });
     document.getElementById('layer-vessels')?.addEventListener('change', (e) => {
       this.anatomy.vesselsGroup.visible = (e.target as HTMLInputElement).checked;

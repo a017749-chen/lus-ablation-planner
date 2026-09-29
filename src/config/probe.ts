@@ -26,6 +26,13 @@ export interface GuideSpec {
   angleReference: 'array-axis' | 'beam-axis';
 }
 
+export interface LusCouplingSpec {
+  /** Maximum allowable gap between flat array ends and curved liver surface (mm). */
+  maxArrayEndGapMm: number;
+  /** Maximum allowable angular divergence between array normal and local surface normal (degrees). */
+  maxNormalDivergenceDeg: number;
+}
+
 export interface LusProbeSpec {
   model: string;
   calibrated: boolean;
@@ -47,6 +54,7 @@ export interface LusProbeSpec {
     sliceThicknessMm: number;
   };
   guide: GuideSpec;
+  coupling?: LusCouplingSpec;
 }
 
 export const LUS_PROBE: LusProbeSpec = {
@@ -69,6 +77,10 @@ export const LUS_PROBE: LusProbeSpec = {
     holeHeightMm: 0,
     angleDeg: 30,
     angleReference: 'array-axis'
+  },
+  coupling: {
+    maxArrayEndGapMm: 3.5,
+    maxNormalDivergenceDeg: 42
   }
 };
 

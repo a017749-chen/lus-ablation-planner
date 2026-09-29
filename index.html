@@ -134,6 +134,14 @@
           <span>示意肝葉</span>
         </label>
         <label class="flex items-center space-x-2 cursor-pointer text-slate-300 hover:text-white">
+          <input type="checkbox" id="layer-couinaud" checked class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0">
+          <span>Couinaud 肝分段線與標籤</span>
+        </label>
+        <label class="flex items-center space-x-2 cursor-pointer text-slate-300 hover:text-white">
+          <input type="checkbox" id="layer-landmarks" checked class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0">
+          <span>膽囊與鐮狀韌帶 (Landmarks)</span>
+        </label>
+        <label class="flex items-center space-x-2 cursor-pointer text-slate-300 hover:text-white">
           <input type="checkbox" id="layer-vessels" checked class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0">
           <span>IVC / 門靜脈</span>
         </label>
@@ -434,6 +442,18 @@
               <span id="val-probe-flexlr" class="font-bold text-emerald-400">0°</span>
             </div>
             <input type="range" id="input-probe-flexlr" min="-90" max="90" step="1" value="0" class="w-full">
+          </div>
+
+          <!-- Acoustic Coupling Live Telemetry -->
+          <div id="probe-coupling-card" class="p-2 rounded bg-slate-950/80 border border-slate-800 text-[10px] space-y-1">
+            <div class="flex justify-between items-center">
+              <span class="text-slate-400">探頭聲學貼合 (Acoustic Coupling):</span>
+              <span id="probe-coupling-badge" class="font-bold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300">良好</span>
+            </div>
+            <div class="flex justify-between text-[9px] text-slate-400">
+              <span>陣列邊緣間隙: <span id="probe-coupling-gap" class="text-slate-200 font-mono">0.6 mm</span></span>
+              <span>表面法線夾角: <span id="probe-coupling-div" class="text-slate-200 font-mono">14°</span></span>
+            </div>
           </div>
         </div>
 

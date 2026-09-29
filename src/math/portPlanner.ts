@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { LUS_PROBE, LusProbeSpec, NEEDLE_SPEC, NeedleSpec } from '../config/probe';
 import {
+  ArrayCouplingMetrics,
+  evaluateArrayAcousticCoupling,
   isOverRibCage,
   liverNormal,
   liverValue,
@@ -88,7 +90,8 @@ export type Reason =
   | 'target-not-centerable'
   | 'needle-hits-probe'
   | 'needle-blind-in-liver'
-  | 'needle-too-steep';
+  | 'needle-too-steep'
+  | 'poor-acoustic-coupling';
 
 export type Warning = 'over-rib-cage' | 'needle-near-beam-axis' | 'rib-path-not-evaluable';
 
@@ -112,6 +115,7 @@ export const REASON_TEXT: Record<Reason | Warning, string> = {
   'needle-hits-probe': '針會碰到探頭（要從探頭尖端旁邊進肝）',
   'needle-blind-in-liver': '針在肝內有一段跑在影像外，看不到',
   'needle-too-steep': '針太接近聲束方向，影像上看不清楚',
+  'poor-acoustic-coupling': '探頭陣列兩端貼合不良（曲率過大或陣列懸空）',
   'over-rib-cage': '在肋骨區上方（需經肋間）',
   'needle-near-beam-axis': '針幾乎與聲束平行，影像上不易看見',
   'rib-path-not-evaluable': '未提供 patient-specific ribs，完整肋骨路徑碰撞不可評估'
@@ -120,6 +124,7 @@ export const REASON_TEXT: Record<Reason | Warning, string> = {
 export interface ProbeSolution {
   window: AcousticWindow;
   pose: ProbePose;
+  coupling?: ArrayCouplingMetrics;
 }
 
 export interface ProbePortResult {
@@ -154,7 +159,7 @@ function tryPose(
   window: AcousticWindow,
   arrayAxis: THREE.Vector3,
   spec: LusProbeSpec
-): { pose?: ProbePose; reason?: Reason } {
+): { pose?: ProbePose; coupling?: ArrayCouplingMetrics; reason?: Reason } {
   const joint = window.point.clone().addScaledVector(arrayAxis, -spec.tipLengthMm);
   const pose = poseFromParts(pivot, joint, arrayAxis, window.beam, spec);
   if (pose.insertionMm > spec.maxShaftLengthMm) return { reason: 'too-far' };
@@ -170,7 +175,18 @@ function tryPose(
   if (patient?.ribPathStatus?.(pivot, joint, spec.shaftDiameterMm / 2) === 'crosses') {
     return { reason: 'shaft-through-rib' };
   }
-  return { pose };
+  const coupling = evaluateArrayAcousticCoupling(
+    window.point,
+    arrayAxis,
+    window.beam,
+    spec.image.widthMm,
+    spec.coupling?.maxArrayEndGapMm ?? 3.5,
+    spec.coupling?.maxNormalDivergenceDeg ?? 42.0
+  );
+  if (!coupling.hasCoupling) {
+    return { reason: 'poor-acoustic-coupling' };
+  }
+  return { pose, coupling };
 }
 
 /** Array axes that keep the target in the image plane at this window. */
@@ -212,13 +228,13 @@ export function evaluateProbePort(
   for (const window of windows) {
     let ok = false;
     for (const axis of candidateAxes(pivot, window)) {
-      const { pose, reason } = tryPose(pivot, window, axis, spec);
+      const { pose, coupling, reason } = tryPose(pivot, window, axis, spec);
       if (!pose) {
         failures.set(reason!, (failures.get(reason!) ?? 0) + 1);
         continue;
       }
       ok = true;
-      if (!best || pose.flexDeg < best.pose.flexDeg) best = { window, pose };
+      if (!best || pose.flexDeg < best.pose.flexDeg) best = { window, pose, coupling };
     }
     if (ok) count++;
   }
@@ -321,7 +337,7 @@ export function solveGuidedNeedle(
     }
     if (miss > toleranceMm) { fail('guide-misses-target'); continue; }
     for (const axis of axes) {
-      const { pose, reason } = tryPose(pivot, window, axis, spec);
+      const { pose, coupling, reason } = tryPose(pivot, window, axis, spec);
       if (!pose) { fail(reason!); continue; }
       const guide = guideLine(pose, spec);
       const skinEntry = raySkinIntersection(guide.hole, guide.direction.clone().negate());
@@ -332,7 +348,7 @@ export function solveGuidedNeedle(
       const toTarget = target.clone().sub(guide.hole);
       const along = toTarget.dot(guide.direction);
       const guideMissMm = toTarget.addScaledVector(guide.direction, -along).length();
-      solutions.push({ window, pose, skinEntry, needle, guideMissMm });
+      solutions.push({ window, pose, coupling, skinEntry, needle, guideMissMm });
     }
   }
   const leastFlex = solutions.reduce<GuidedSolution | undefined>(

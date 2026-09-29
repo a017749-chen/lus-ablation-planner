@@ -3,6 +3,7 @@ import { LESION_PRESETS, TROCAR_PRESETS } from '../config/presets';
 import { LUS_PROBE, LusProbeSpec } from '../config/probe';
 import {
   costalMarginPoint,
+  evaluateArrayAcousticCoupling,
   isOverRibCage,
   liverNormal,
   liverValue,
@@ -297,6 +298,34 @@ test('the plan lists candidates and poses nothing by itself', () => {
   for (let i = 1; i < plan.entries.length; i++) {
     assert(plan.entries[i - 1].needle.lengthMm <= plan.entries[i].needle.lengthMm, 'sorted by needle length');
   }
+});
+
+test('array acoustic coupling: smooth contact passes, edge overhangs and extreme gaps fail', () => {
+  const result = evaluateProbePort(SUBCOSTAL.pivotPosition, S5);
+  assert(result.feasible && result.leastFlex, 'subcostal probe port finds feasible acoustic contact on S5');
+  const { pose } = result.leastFlex;
+
+  const okCoupling = evaluateArrayAcousticCoupling(
+    pose.arrayCenter,
+    pose.arrayAxis,
+    pose.beamDir,
+    LUS_PROBE.image.widthMm,
+    3.5,
+    42
+  );
+  assert(okCoupling.hasCoupling, 'linear array on smooth anterior surface must achieve valid acoustic coupling');
+  assert(!okCoupling.isOverhang, 'array on anterior surface must not overhang');
+  assert(okCoupling.maxGapMm <= 3.5, `gap within limit (got ${okCoupling.maxGapMm.toFixed(2)} mm)`);
+
+  // Severe overhang off the lateral liver tip (extending past rightExtent)
+  const tipPoint = new THREE.Vector3(-148, 25, -10);
+  const lateralAxis = new THREE.Vector3(-1, 0, 0);
+  const overhangCoupling = evaluateArrayAcousticCoupling(tipPoint, lateralAxis, new THREE.Vector3(0, 0, -1), 50, 3.5, 42);
+  assert(!overhangCoupling.hasCoupling && overhangCoupling.isOverhang, 'array extending past liver tip must fail as overhang');
+
+  // Strict gap limit triggers failure
+  const strictCoupling = evaluateArrayAcousticCoupling(pose.arrayCenter, pose.arrayAxis, pose.beamDir, LUS_PROBE.image.widthMm, 0.1, 42);
+  assert(!strictCoupling.hasCoupling, 'unrealistically strict 0.1mm gap tolerance must reject natural tissue curvature');
 });
 
 let failed = 0;
