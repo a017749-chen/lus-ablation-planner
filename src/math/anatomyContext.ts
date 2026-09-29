@@ -64,3 +64,10 @@ export function onPatientAnatomyContextChange(listener: ContextListener): () => 
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
+
+// This module is already part of the original planner dependency graph. Bootstrapping
+// the optional patient loader here avoids changing the large main.ts application and
+// does nothing in Node/test environments.
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  queueMicrotask(() => { void import('../patientMode'); });
+}
