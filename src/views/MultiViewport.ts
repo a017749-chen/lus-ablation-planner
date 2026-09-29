@@ -3,6 +3,11 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TROCAR_PRESETS } from '../config/presets';
 import { ANTERIOR_VIEW, SURGEON_VIEW } from '../math/patientCoordinates';
 
+// MultiViewport is part of the browser-only UI path and is imported by main.ts.
+// Load the patient-anatomy panel from that same runtime graph without pulling DOM
+// code into the Node-only math tests. The guard keeps this side effect browser-only.
+if (typeof document !== 'undefined') void import('../patientMode');
+
 export interface ViewportManager {
   mainCamera: THREE.PerspectiveCamera;
   lapCamera: THREE.PerspectiveCamera;
