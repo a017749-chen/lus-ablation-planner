@@ -17,7 +17,7 @@ export function getAnteriorSkinSurfacePoint(
   clearance = 0
 ): THREE.Vector3 | null {
   const patient = getPatientAnatomyContext();
-  if (patient) return patient.anteriorSkinPoint(x, y, clearance);
+  if (patient) return patient.anteriorSkinPoint?.(x, y, clearance) ?? null;
 
   const { centerX, centerY, baseZ, radiusX, radiusY, radiusZ } = ANTERIOR_SKIN_SURFACE;
   if (![x, y, clearance].every(Number.isFinite)) return null;
@@ -38,7 +38,7 @@ export function getAnteriorSkinSurfacePoint(
 export function getAnteriorSkinSurfaceNormal(x: number, y: number): THREE.Vector3 | null {
   const patient = getPatientAnatomyContext();
   if (patient) {
-    const point = patient.anteriorSkinPoint(x, y, 0);
+    const point = patient.anteriorSkinPoint?.(x, y, 0);
     return point ? patient.skinNormal(point) : null;
   }
 
