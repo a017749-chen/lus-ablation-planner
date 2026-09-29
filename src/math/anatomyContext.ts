@@ -25,11 +25,6 @@ export interface VesselClearanceResult {
   clinicalSafetyEstablished: false;
 }
 
-/**
- * Patient anatomy override used by the existing planner geometry helpers.
- * When absent, the original illustrative analytic geometry remains authoritative
- * for the demonstration mode only.
- */
 export interface AnatomyContext {
   readonly kind: 'patient';
   readonly label: string;
@@ -47,9 +42,25 @@ export interface AnatomyContext {
   lesions(): AnatomyLesion[];
 }
 
+type ContextListener = (context: AnatomyContext | null) => void;
 let patientContext: AnatomyContext | null = null;
+const listeners = new Set<ContextListener>();
 
-export function setPatientAnatomyContext(context: AnatomyContext): void { patientContext = context; }
-export function resetPatientAnatomyContext(): void { patientContext = null; }
+function publish(): void {
+  for (const listener of listeners) listener(patientContext);
+}
+
+export function setPatientAnatomyContext(context: AnatomyContext): void {
+  patientContext = context;
+  publish();
+}
+export function resetPatientAnatomyContext(): void {
+  patientContext = null;
+  publish();
+}
 export function getPatientAnatomyContext(): AnatomyContext | null { return patientContext; }
 export function isPatientAnatomyActive(): boolean { return patientContext !== null; }
+export function onPatientAnatomyContextChange(listener: ContextListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
