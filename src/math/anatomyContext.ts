@@ -27,10 +27,8 @@ export interface VesselClearanceResult {
 
 /**
  * Patient anatomy override used by the existing planner geometry helpers.
- *
- * When no override is active, anatomyShapes/skinSurface/collision keep using their
- * original illustrative analytic geometry. This keeps all existing demo and
- * regression behaviour unchanged until a reviewed patient anatomy is loaded.
+ * When absent, the original illustrative analytic geometry remains authoritative
+ * for the demonstration mode only.
  */
 export interface AnatomyContext {
   readonly kind: 'patient';
@@ -41,7 +39,7 @@ export interface AnatomyContext {
   liverNormal(point: THREE.Vector3): THREE.Vector3;
   segmentCrossesLiver(a: THREE.Vector3, b: THREE.Vector3, steps?: number, endClearanceMm?: number): boolean;
   raySkinIntersection(origin: THREE.Vector3, direction: THREE.Vector3): THREE.Vector3 | null;
-  anteriorSkinPoint(x: number, y: number, offsetMm?: number): THREE.Vector3 | null;
+  anteriorSkinPoint?(x: number, y: number, offsetMm?: number): THREE.Vector3 | null;
   skinNormal(point: THREE.Vector3): THREE.Vector3 | null;
   isUnderSkin(point: THREE.Vector3): boolean;
   ribCageStatus(point: THREE.Vector3): RibCageStatus;
