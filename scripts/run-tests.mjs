@@ -34,5 +34,20 @@ for (const file of [
     console.log(`FAIL: ${error.message}`);
   }
 }
+
+// The patient module is intentionally browser-only and therefore cannot execute in
+// this Node math harness. Still guard the integration point so a green build cannot
+// ship the module as unreachable/dead code again.
+try {
+  const viewport = readFileSync(new URL('../src/views/MultiViewport.ts', import.meta.url), 'utf8');
+  if (!viewport.includes("import('../patientMode')")) {
+    throw new Error('browser runtime does not load patientMode.ts');
+  }
+  console.log('\nPASS patientMode browser bootstrap is wired into the runtime graph');
+} catch (error) {
+  failures++;
+  console.log(`\nFAIL patientMode bootstrap: ${error.message}`);
+}
+
 process.exitCode = failures ? 1 : 0;
-if (failures) console.log(`\n${failures} test file(s) failed.`);
+if (failures) console.log(`\n${failures} test area(s) failed.`);
